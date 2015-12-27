@@ -1,0 +1,7 @@
+* executable that extracts loop
+	| simple extract
+	| extract + inline
+	| extract + duplicate called function
+* profile to find out hot loops
+* setup breakpoints and record input to extracted loops
+* hook them up
