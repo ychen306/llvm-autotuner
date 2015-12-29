@@ -2,6 +2,11 @@
 
 #define N 40
 
+int get(int n)
+{
+	return n;
+}
+
 int main()
 {
 	int a = 0,
@@ -9,9 +14,9 @@ int main()
 		i; 
 	
 	for (i = 0; i < N; i++) { 
-		int t = a + b;
-		a = b;
-		b = t;
+		int t = get(a) + get(b);
+		a = get(b);
+		b = get(t);
 	} 
 	printf("%d\n", a);
 }

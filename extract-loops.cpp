@@ -10,7 +10,9 @@
 #include <llvm/Support/SourceMgr.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Analysis/CallGraph.h>
 #include <llvm/Transforms/Utils/CodeExtractor.h>
+#include <llvm/Transforms/Utils/Cloning.h>
 #include <llvm/Bitcode/BitcodeWriterPass.h>
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
@@ -73,6 +75,13 @@ InputFilename(
     cl::desc("<input file>"),
     cl::Required);
 
+cl::opt<unsigned>
+InlineDepth(
+    "i",
+    cl::desc("Specify inline depth for extracted loop"),
+    cl::value_desc("inline-depth"),
+    cl::init(3));
+
 cl::opt<std::string>
 OutputFilename(
     "o",
@@ -89,6 +98,8 @@ LoopsToExtract(
 struct LoopExtractor : public ModulePass {
   static char ID;
 
+  // inline as much as possible within the body of `Caller`
+  void doInline(Function *, CallGraph *);
   virtual bool runOnModule(Module &) override;
   virtual void getAnalysisUsage(AnalysisUsage &) const override;
   LoopExtractor() : ModulePass(ID) { initializeLoopExtractorPass(*PassRegistry::getPassRegistry()); }
@@ -113,7 +124,9 @@ INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 
 bool LoopExtractor::runOnModule(Module &M)
 { 
-  bool Changed = false;
+  bool Changed = false; 
+  CallGraph CG(M);
+
   // mapping function -> ids of basic blocks
   std::map<std::string, std::set<unsigned> > Loops;
   for (LoopHeader &LH : LoopsToExtract)
@@ -152,7 +165,8 @@ bool LoopExtractor::runOnModule(Module &M)
     // actually extract loops
     for (Loop *L : ToExtract) {
       CodeExtractor CE(DT, *L); 
-      CE.extractCodeRegion(); 
+      Function *Extracted = CE.extractCodeRegion(); 
+      doInline(Extracted, &CG);
     }
     ToExtract.resize(0);
 
@@ -160,6 +174,29 @@ bool LoopExtractor::runOnModule(Module &M)
 
   return Changed;
 }
+
+void LoopExtractor::doInline(Function *Caller, CallGraph *CG)
+{
+  bool Inlined = true;
+  std::vector<CallSite> ToInline;
+  InlineFunctionInfo IFI(CG);
+
+  for (unsigned i = 0; i < InlineDepth; i++) {
+    for (BasicBlock &BB : *Caller) {
+      for (Instruction &Inst : BB) { 
+        if (isa<InvokeInst>(&Inst) || isa<CallInst>(&Inst))
+          ToInline.push_back(CallSite(&Inst));
+      }
+    }
+
+    for (CallSite &CS : ToInline) {
+      Inlined = InlineFunction(CS, IFI) || Inlined;
+    }
+
+    if (!Inlined) break;
+  }
+}
+
 
 int main(int argc, char **argv)
 {
