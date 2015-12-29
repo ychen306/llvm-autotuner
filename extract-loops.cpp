@@ -176,10 +176,12 @@ bool LoopExtractor::runOnModule(Module &M)
     for (Loop *L : ToExtract) {
       CodeExtractor CE(DT, *L); 
       Function *Extracted = CE.extractCodeRegion(); 
-      doInline(Extracted, &CG); 
-      ExtractedLoops.push_back(Extracted);
+      if (!Extracted) continue;
+
       // each extracted loop will reside in its own module
       NewModules.push_back(CloneModule(&M));
+      ExtractedLoops.push_back(Extracted);
+      doInline(Extracted, &CG); 
     }
     ToExtract.resize(0);
 
