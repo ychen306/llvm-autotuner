@@ -116,10 +116,10 @@ char LoopExtractor::ID = 42;
 
 
 // define `initializeLoopExtractorPass()`
-  INITIALIZE_PASS_BEGIN(LoopExtractor, "", "", true, true)
-  INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
+INITIALIZE_PASS_BEGIN(LoopExtractor, "", "", true, true)
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
-  INITIALIZE_PASS_END(LoopExtractor, "", "", true, true)
+INITIALIZE_PASS_END(LoopExtractor, "", "", true, true)
 
 
 bool LoopExtractor::runOnModule(Module &M)
@@ -177,7 +177,7 @@ bool LoopExtractor::runOnModule(Module &M)
 
 void LoopExtractor::doInline(Function *Caller, CallGraph *CG)
 {
-  bool Inlined = true;
+  bool Inlined = false;
   std::vector<CallSite> ToInline;
   InlineFunctionInfo IFI(CG);
 
