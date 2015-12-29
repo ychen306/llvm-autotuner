@@ -1,4 +1,5 @@
 #include <llvm/Pass.h>
+#include <llvm/Transforms/IPO.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IRReader/IRReader.h>
 #include <llvm/Support/Debug.h>
@@ -14,18 +15,19 @@
 #include <llvm/Transforms/Utils/CodeExtractor.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 #include <llvm/Bitcode/BitcodeWriterPass.h>
-#include "llvm/Support/CommandLine.h"
-#include "llvm/Support/FileSystem.h"
-#include "llvm/Support/ManagedStatic.h"
-#include "llvm/Support/PrettyStackTrace.h"
-#include "llvm/Support/Regex.h"
-#include "llvm/Support/Signals.h"
-#include "llvm/Support/SourceMgr.h"
-#include "llvm/Support/SystemUtils.h"
-#include "llvm/Support/ToolOutputFile.h"
+#include <llvm/Support/CommandLine.h>
+#include <llvm/Support/FileSystem.h>
+#include <llvm/Support/ManagedStatic.h>
+#include <llvm/Support/PrettyStackTrace.h>
+#include <llvm/Support/Regex.h>
+#include <llvm/Support/Signals.h>
+#include <llvm/Support/SourceMgr.h>
+#include <llvm/Support/SystemUtils.h>
+#include <llvm/Support/ToolOutputFile.h>
 
 #include <utility>
 #include <set>
+#include <memory>
 #include <string>
 #include <vector>
 #include <map>
@@ -33,7 +35,7 @@
 
 using namespace llvm;
 
-// since basic blocks can be implicitly labelled,
+// because basic blocks can be implicitly labelled,
 // we will reference them (across program executations) by the
 // order of defualt traversal. i.e. the first block encounter
 // in `for (auto &BB : F)` has id 1;
@@ -83,10 +85,10 @@ InlineDepth(
     cl::init(3));
 
 cl::opt<std::string>
-OutputFilename(
-    "o",
-    cl::desc("Specify output filename"),
-    cl::value_desc("filename"), cl::init("-"));
+OuputPrefix(
+    "p",
+    cl::desc("Specify output prefix"),
+    cl::value_desc("output prefix"), cl::init("-"));
 
 cl::list<LoopHeader, bool, LoopHeaderParser>
 LoopsToExtract(
@@ -100,9 +102,15 @@ struct LoopExtractor : public ModulePass {
 
   // inline as much as possible within the body of `Caller`
   void doInline(Function *, CallGraph *);
+
   virtual bool runOnModule(Module &) override;
+
   virtual void getAnalysisUsage(AnalysisUsage &) const override;
-  LoopExtractor() : ModulePass(ID) { initializeLoopExtractorPass(*PassRegistry::getPassRegistry()); }
+
+  LoopExtractor() : ModulePass(ID) {
+    initializeLoopExtractorPass(*PassRegistry::getPassRegistry());
+  }
+
   const char *getPassName() const override { return "LoopExtractor pass"; }
 }; 
 
@@ -121,6 +129,8 @@ INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_END(LoopExtractor, "", "", true, true)
 
+static std::vector<GlobalValue *> ExtractedLoops;
+static std::vector<Module *> NewModules;
 
 bool LoopExtractor::runOnModule(Module &M)
 { 
@@ -166,11 +176,14 @@ bool LoopExtractor::runOnModule(Module &M)
     for (Loop *L : ToExtract) {
       CodeExtractor CE(DT, *L); 
       Function *Extracted = CE.extractCodeRegion(); 
-      doInline(Extracted, &CG);
+      doInline(Extracted, &CG); 
+      ExtractedLoops.push_back(Extracted);
+      // each extracted loop will reside in its own module
+      NewModules.push_back(CloneModule(&M));
     }
     ToExtract.resize(0);
 
-  }
+  } 
 
   return Changed;
 }
@@ -197,6 +210,11 @@ void LoopExtractor::doInline(Function *Caller, CallGraph *CG)
   }
 }
 
+std::string newFileName()
+{
+  static int id = 0;
+  return OuputPrefix + "." + std::to_string(id++) + ".bc";
+}
 
 int main(int argc, char **argv)
 {
@@ -211,7 +229,7 @@ int main(int argc, char **argv)
   std::unique_ptr<Module> M = parseIRFile(InputFilename, Err, Context);
 
   std::error_code EC;
-  tool_output_file Out(OutputFilename, EC, sys::fs::F_None);
+  tool_output_file Out(newFileName(), EC, sys::fs::F_None);
   if (EC) {
     errs() << EC.message() << '\n';
     return 1;
@@ -220,9 +238,28 @@ int main(int argc, char **argv)
   legacy::PassManager Passes;
 
   Passes.add(new LoopExtractor());
+  Passes.add(createGVExtractionPass(ExtractedLoops, true));
   Passes.add(createBitcodeWriterPass(Out.os(), true));
 
   Passes.run(*M.get());
 
   Out.keep();
+
+  errs () << ExtractedLoops.size() << '\n';
+
+  // now remove everything in a new module except
+  // the extracted loop
+  for (unsigned i = 0, e = NewModules.size(); i != e; i++) {
+    Module *NewModule = NewModules[i]; 
+    std::vector<GlobalValue *> Preserve;
+    Preserve.push_back(ExtractedLoops[i]);
+    tool_output_file ExtractedOut(newFileName(), EC, sys::fs::F_None);
+
+    legacy::PassManager PM; 
+    PM.add(createGVExtractionPass(Preserve, false));
+    PM.add(createBitcodeWriterPass(ExtractedOut.os(), true)); 
+    PM.run(*NewModule);
+
+    ExtractedOut.keep();
+  }
 }
