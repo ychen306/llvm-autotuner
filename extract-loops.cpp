@@ -245,8 +245,6 @@ int main(int argc, char **argv)
 
   Out.keep();
 
-  errs () << ExtractedLoops.size() << '\n';
-
   // now remove everything in a new module except
   // the extracted loop
   for (unsigned i = 0, e = NewModules.size(); i != e; i++) {
@@ -261,5 +259,6 @@ int main(int argc, char **argv)
     PM.run(*NewModule);
 
     ExtractedOut.keep();
+    delete NewModule;
   }
 }
