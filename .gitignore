@@ -1,4 +1,9 @@
 Makefile
+x
+
+# llvm object files
+*.ll
+*.bc
 
 # vim swap file
 *.swp

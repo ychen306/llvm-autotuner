@@ -8,8 +8,6 @@
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Dominators.h>
-#include <llvm/Support/SourceMgr.h>
-#include <llvm/Support/raw_ostream.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Transforms/Utils/CodeExtractor.h>
@@ -19,11 +17,11 @@
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/ManagedStatic.h>
 #include <llvm/Support/PrettyStackTrace.h>
-#include <llvm/Support/Regex.h>
 #include <llvm/Support/Signals.h>
 #include <llvm/Support/SourceMgr.h>
 #include <llvm/Support/SystemUtils.h>
 #include <llvm/Support/ToolOutputFile.h>
+#include <llvm/Support/raw_ostream.h>
 
 #include <utility>
 #include <set>
@@ -88,7 +86,8 @@ cl::opt<std::string>
 OuputPrefix(
     "p",
     cl::desc("Specify output prefix"),
-    cl::value_desc("output prefix"), cl::init("-"));
+    cl::value_desc("output prefix"),
+    cl::init("-"));
 
 cl::list<LoopHeader, bool, LoopHeaderParser>
 LoopsToExtract(
@@ -101,7 +100,7 @@ struct LoopExtractor : public ModulePass {
   static char ID;
 
   // inline as much as possible within the body of `Caller`
-  void doInline(Function *, CallGraph *);
+  void doInline(Function *Caller, CallGraph *);
 
   virtual bool runOnModule(Module &) override;
 

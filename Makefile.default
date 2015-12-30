@@ -3,15 +3,21 @@ LIBS = all
 LDFLAGS = $(shell llvm-config --ldflags --system-libs --libs $(LIBS))
 CXXFLAGS = $(shell llvm-config --cxxflags) -g
 CXX = clang++
+CC = clang
+EXES = extract-loops instrument-loops
 
-EXE = extract-loops
+.PHONY: all clean prof
 
-.PHONY: all clean
-
-all: $(EXE)
+all: $(EXES) prof
 
 extract-loops: extract-loops.o
 	$(CXX) $^ $(LDFLAGS) -o $@
+
+instrument-loops: instrument-loops.o
+	$(CXX) $^ $(LDFLAGS) -o $@
+
+prof: prof.c
+	$(CC) -O3 -c -emit-llvm prof.c -o prof.bc
 
 clean:
 	rm -rf *.o $(EXE)
