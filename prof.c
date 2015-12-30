@@ -3,9 +3,13 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#define PROF_OUT "prof.out.tsv"
+#define PROF_OUT "prof.out.csv"
+
 
 /*
+ * TODO
+ * make this work with threads
+ *
  * note that the time unit is clock ticks, not seconds
  */
 struct loop_data {
@@ -16,8 +20,8 @@ struct loop_data {
 	char *fn_name;
 };
 
-extern struct loop_data **loops;
-extern unsigned num_loops;
+extern struct loop_data *_prof_loops[];
+extern uint32_t _prof_num_loops;
 
 void _prof_begin(struct loop_data *loop)
 {
@@ -32,7 +36,7 @@ void _prof_end(struct loop_data *loop)
 	if (!loop->running) return;
 
 	loop->running = 0;
-	loop->total_elapsed += (double)clock() - loop->cur_begin;
+	loop->total_elapsed += ((double)clock()) - loop->cur_begin;
 }
 
 void _prof_dump()
@@ -40,12 +44,12 @@ void _prof_dump()
 	unsigned i;
 	FILE *out = fopen(PROF_OUT, "wb");
 
-	fprintf(out, "function\tloop id\ttime spend");
-	for (i = 0; i < num_loops; i++) {
-		struct loop_data *loop = loops[i]; 
-		fprintf(out, "%s\t%du\t%f",
+	fprintf(out, "function,loop id,time spent\n");
+	for (i = 0; i < _prof_num_loops; i++) {
+		struct loop_data *loop = _prof_loops[i]; 
+		fprintf(out, "%s,%d,%f\n",
 				loop->fn_name,
-				loop->id,
+				(int) loop->id,
 				loop->total_elapsed);
 	}
 

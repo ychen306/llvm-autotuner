@@ -54,6 +54,8 @@ void initializeLoopInstrumentationPass(PassRegistry &);
 struct LoopInstrumentation : public ModulePass {                       
   static char ID;
 
+  Module *curM;
+
   LoopInstrumentation() : ModulePass(ID) {
     initializeLoopInstrumentationPass(*PassRegistry::getPassRegistry());
   };
@@ -81,8 +83,27 @@ struct LoopInstrumentation : public ModulePass {
 };
 
 void LoopInstrumentation::declareLoopDataArr(std::vector<Constant *> &LoopDataArr)
-{
+{ 
+  unsigned NumLoops = LoopDataArr.size();
+  ArrayType *ArrTy = ArrayType::get(LoopDataTy->getPointerTo(), NumLoops);
+  Constant *ArrContent = ConstantArray::get(ArrTy, LoopDataArr);
+  // declare `_prof_loops`
+  new GlobalVariable(*curM,
+      ArrTy,
+      false, GlobalValue::ExternalLinkage,
+      ArrContent, "_prof_loops", nullptr,
+      GlobalVariable::NotThreadLocal,
+      0);
 
+  // also define `_prof_num_loop`
+  Type *IntTy = Type::getInt32Ty(curM->getContext());
+  Constant *NumLoop = ConstantInt::get(IntTy, NumLoops, true);
+  new GlobalVariable(*curM,
+      IntTy,
+      true, GlobalValue::ExternalLinkage,
+      NumLoop, "_prof_num_loops", nullptr,
+      GlobalVariable::NotThreadLocal,
+      0); 
 }
 
 // to insert static declarations to support profiling
@@ -135,17 +156,16 @@ void LoopInstrumentation::init(Module &M)
 
   // register _prof_dump to run before the exit of program
   Function *Main = M.getFunction("main");
-  if (Main) {
-    BasicBlock &Entry = Main->getEntryBlock();
-    std::vector<Value *> Arg;
-    Arg.push_back(Dump);
-    Instruction &FirstInstr = *Entry.begin();
-    CallInst::Create(
-        Atexit, 
-        Arg,
-        Twine("prof.registerDump"),
-        &FirstInstr);
-  }
+  assert(Main && "Module doens't contain main"); 
+  BasicBlock &Entry = Main->getEntryBlock();
+  std::vector<Value *> Arg;
+  Arg.push_back(Dump);
+  Instruction &FirstInstr = *Entry.begin();
+  CallInst::Create(
+      Atexit, 
+      Arg,
+      Twine("prof.registerDump"),
+      &FirstInstr);
 }
 
 
@@ -174,7 +194,7 @@ Constant *LoopInstrumentation::instrumentLoop(Constant *Fn, Loop *L, unsigned Id
   Constant *Struct = ConstantStruct::get(LoopDataTy, Fields);
   GlobalVariable *Data = new GlobalVariable(*Preheader->getParent()->getParent(),
       Struct->getType(),
-      true, GlobalValue::PrivateLinkage,
+      false, GlobalValue::ExternalLinkage,
       Struct, "prof.data", nullptr,
       GlobalVariable::NotThreadLocal,
       0);
@@ -192,13 +212,15 @@ Constant *LoopInstrumentation::instrumentLoop(Constant *Fn, Loop *L, unsigned Id
   SmallVector<BasicBlock *, 4> Exits;
   L->getExitBlocks(Exits);
   // insert a call to `_prof_end` in the beginning of every exit blocks
+  // TODO conside laddingpad, phi, etc
   for (BasicBlock *BB : Exits) { 
-    Instruction &FirstInst = *BB->begin();
+    BasicBlock::iterator I(BB->getFirstNonPHI());
+    while (isa<LandingPadInst>(I)) ++I;
     CallInst::Create(
         EndFn,
         ProfArg,
         Twine(""),
-        &FirstInst);
+        &*I);
   }
   
   return Data;
@@ -206,6 +228,7 @@ Constant *LoopInstrumentation::instrumentLoop(Constant *Fn, Loop *L, unsigned Id
 
 bool LoopInstrumentation::runOnModule(Module &M)
 { 
+  curM = &M;
   init(M);
 
   LLVMContext &Ctx = M.getContext();
@@ -233,14 +256,14 @@ bool LoopInstrumentation::runOnModule(Module &M)
     for (BasicBlock &BB : F) {
       ++i;
       Loop *L = LI.getLoopFor(&BB);
-      if (!L || !L->isLoopSimplifyForm() || L->getHeader() != &BB) continue;
+      if (!L || L->getParentLoop() ||
+          !L->isLoopSimplifyForm() || L->getHeader() != &BB) continue;
 
       LoopData.push_back(instrumentLoop(FnName, L, i));
     }
   }
 
   declareLoopDataArr(LoopData);
-  M.dump();
   return true;
 } 
 
