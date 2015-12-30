@@ -1,5 +1,8 @@
 Makefile
 x
+instrument-loops
+extract-loops
+
 
 # llvm object files
 *.ll
