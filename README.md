@@ -11,8 +11,9 @@ to `prof.out.csv`.
  
 For example, to profile top-level loops in `fib.bc`, one can
 ```shell
-./instrument-loops fib.bc
-llvm-link fib.bc prof.bc -o - | llc -filetype=obj -o fib.o
+./instrument-loops fib.bc -o fib.prof.bc
+# make generates `prof.bc'
+llvm-link fib.prof.bc prof.bc -o - | llc -filetype=obj -o fib.o
 cc fib.o -o fib
 ./fib && cat prof.out.csv
 ```
