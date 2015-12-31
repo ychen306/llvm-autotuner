@@ -69,27 +69,28 @@ struct LoopHeaderParser : public cl::parser<LoopHeader> {
   }
 };
 
-cl::opt<std::string>
+static cl::opt<std::string>
 InputFilename(
     cl::Positional,
     cl::desc("<input file>"),
     cl::Required);
 
-cl::opt<unsigned>
+static cl::opt<unsigned>
 InlineDepth(
     "i",
     cl::desc("Specify inline depth for extracted loop"),
     cl::value_desc("inline-depth"),
-    cl::init(3));
+    cl::init(3),
+    cl::Optional);
 
-cl::opt<std::string>
+static cl::opt<std::string>
 OuputPrefix(
     "p",
     cl::desc("Specify output prefix"),
     cl::value_desc("output prefix"),
-    cl::init("-"));
+    cl::Required);
 
-cl::list<LoopHeader, bool, LoopHeaderParser>
+static cl::list<LoopHeader, bool, LoopHeaderParser>
 LoopsToExtract(
     "l",
     cl::desc("Specify loop(s) to extract. Describe a loop in this format: \"[function],[loop header]\""),
@@ -100,7 +101,7 @@ struct LoopExtractor : public ModulePass {
   static char ID;
 
   // inline as much as possible within the body of `Caller`
-  void doInline(Function *Caller, CallGraph *);
+  void doInline(Function *Caller, CallGraph * CG);
 
   virtual bool runOnModule(Module &) override;
 
@@ -177,25 +178,27 @@ bool LoopExtractor::runOnModule(Module &M)
       Function *Extracted = CE.extractCodeRegion(); 
       if (!Extracted) continue;
 
-      // each extracted loop will reside in its own module
-      NewModules.push_back(CloneModule(&M));
       ExtractedLoops.push_back(Extracted);
       doInline(Extracted, &CG); 
     }
     ToExtract.resize(0);
 
-  } 
+  }
+
+  // each extracted loop will reside in its own module
+  for (unsigned i = 0, e = ExtractedLoops.size(); i != e; i++)
+    NewModules.push_back(CloneModule(&M));
 
   return Changed;
 }
 
 void LoopExtractor::doInline(Function *Caller, CallGraph *CG)
 {
-  bool Inlined = false;
   std::vector<CallSite> ToInline;
-  InlineFunctionInfo IFI(CG);
+  InlineFunctionInfo IFI;
 
   for (unsigned i = 0; i < InlineDepth; i++) {
+
     for (BasicBlock &BB : *Caller) {
       for (Instruction &Inst : BB) { 
         if (isa<InvokeInst>(&Inst) || isa<CallInst>(&Inst))
@@ -203,11 +206,13 @@ void LoopExtractor::doInline(Function *Caller, CallGraph *CG)
       }
     }
 
+    bool Inlined = false; 
     for (CallSite &CS : ToInline) {
       Inlined = InlineFunction(CS, IFI) || Inlined;
     }
 
     if (!Inlined) break;
+    ToInline.resize(0);
   }
 }
 
@@ -229,6 +234,11 @@ int main(int argc, char **argv)
   SMDiagnostic Err; 
   std::unique_ptr<Module> M = parseIRFile(InputFilename, Err, Context);
 
+  if (!M.get()) {
+    Err.print(argv[0], errs());
+    return 1;
+  }
+
   std::error_code EC;
   tool_output_file Out(newFileName(), EC, sys::fs::F_None);
   if (EC) {
@@ -236,30 +246,43 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  legacy::PassManager Passes;
+  legacy::PassManager Extraction;
 
-  Passes.add(new LoopExtractor());
-  Passes.add(createGVExtractionPass(ExtractedLoops, true));
-  Passes.add(createBitcodeWriterPass(Out.os(), true));
+  Extraction.add(new LoopExtractor());
+  Extraction.run(*M.get()); 
 
-  Passes.run(*M.get());
+  legacy::PassManager PM;
+  PM.add(createGVExtractionPass(ExtractedLoops, true));
+  PM.add(createBitcodeWriterPass(Out.os(), true));
+  PM.run(*M.get()); 
 
-  Out.keep();
-
+  // TODO
+  // report the mapping from original loop -> extracted bitcode file
+  //
   // now remove everything in a new module except
   // the extracted loop
   for (unsigned i = 0, e = NewModules.size(); i != e; i++) {
     Module *NewModule = NewModules[i]; 
-    std::vector<GlobalValue *> Preserve;
-    Preserve.push_back(ExtractedLoops[i]);
+    std::vector<GlobalValue *> ToPreserve = {
+      NewModule->getFunction(ExtractedLoops[i]->getName()) };
     tool_output_file ExtractedOut(newFileName(), EC, sys::fs::F_None);
 
+    // GVExtractor turns appending linkage into external linkage
+    SmallVector<GlobalVariable *, 4> ToRemove;
+    for (GlobalVariable &GV : NewModule->globals())
+      if (GV.hasAppendingLinkage())
+        ToRemove.push_back(&GV);
+    for (GlobalVariable *GV : ToRemove)
+      GV->removeFromParent();
+
     legacy::PassManager PM; 
-    PM.add(createGVExtractionPass(Preserve, false));
+    PM.add(createGVExtractionPass(ToPreserve, false));
     PM.add(createBitcodeWriterPass(ExtractedOut.os(), true)); 
     PM.run(*NewModule);
 
     ExtractedOut.keep();
     delete NewModule;
   }
+
+  Out.keep();
 }

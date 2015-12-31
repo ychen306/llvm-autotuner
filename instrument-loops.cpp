@@ -76,7 +76,7 @@ struct LoopInstrumentation : public ModulePass {
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<LoopInfoWrapperPass>();
-    AU.addRequiredID(LoopSimplifyID); 
+    //AU.addRequiredID(LoopSimplifyID); 
   }
 
   const char *getPassName() const override { return "LoopInstrumentation pass"; }
@@ -287,7 +287,6 @@ int main(int argc, char **argv)
   } 
 
   legacy::PassManager Passes;
-  Passes.add(createLoopSimplifyPass());
   Passes.add(new LoopInstrumentation());
   Passes.add(createBitcodeWriterPass(Out.os(), true));
 
