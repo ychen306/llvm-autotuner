@@ -9,7 +9,7 @@ should have `main` defined. After instrumenting the module, use `llvm-link` to
 link with `prof.bc`. Instrumented module will automatically dump the profile output
 to `prof.out.csv`
 For example, to profile top-level loops in `fib.bc`, one can
-```
+```shell
 ./instrument-loops fib.bc
 llvm-link fib.bc prof.bc -o - | llc -filetype=obj -o fib.o
 cc fib.o -o fib
