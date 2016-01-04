@@ -1,7 +1,5 @@
 Makefile
-x
-instrument-loops
-extract-loops
+bin/
 
 
 # llvm object files
