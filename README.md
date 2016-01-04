@@ -13,7 +13,7 @@ cc fib.o -o fib
 ./fib && cat prof.out.csv
 ```
 ### create-server
-Transforms a bitcode file into a "server" that runs specified function upon request and reports the time it takes to run that function. Multiple functions can be specified. For instance, to run function `loop` and `loop` only repeatedlyin `x.bc`, on can do as follows
+Transforms a bitcode file into a "server" that runs specified function upon request and reports the time it takes to run that function. Multiple functions can be specified. For instance, to run function `loop` (and `loop` only) repeatedly in `x.bc`, on can do as follows
 ```shell
 # compile the server
 ./create-server -f=loop -o x.server.bc
