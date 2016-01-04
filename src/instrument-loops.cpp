@@ -70,7 +70,7 @@ struct LoopInstrumentation : public ModulePass {
   Constant *instrumentLoop(Constant *Fn, Loop *L, unsigned Id);
 
   // declare `extern struct loop_data **loops` for profiler
-  void declareLoopDataArr(std::vector<Constant *> &);
+  void declare(std::vector<Constant *> &);
 
   void init(Module &M);
 
@@ -82,7 +82,7 @@ struct LoopInstrumentation : public ModulePass {
   const char *getPassName() const override { return "LoopInstrumentation pass"; }
 };
 
-void LoopInstrumentation::declareLoopDataArr(std::vector<Constant *> &LoopDataArr)
+void LoopInstrumentation::declare(std::vector<Constant *> &LoopDataArr)
 { 
   unsigned NumLoops = LoopDataArr.size();
   ArrayType *ArrTy = ArrayType::get(LoopDataTy->getPointerTo(), NumLoops);
@@ -185,12 +185,13 @@ Constant *LoopInstrumentation::instrumentLoop(Constant *Fn, Loop *L, unsigned Id
   Type *IntTy = Type::getInt32Ty(Ctx);
 
   // declare instance of `struct loop_data` 
-  std::vector<Constant *> Fields;
-  Fields.push_back(ConstantFP::get(DoubleTy, 0));
-  Fields.push_back(ConstantFP::get(DoubleTy, 0));
-  Fields.push_back(ConstantInt::get(IntTy, 0, true));
-  Fields.push_back(ConstantInt::get(IntTy, Id, true));
-  Fields.push_back(Fn);
+  std::vector<Constant *> Fields = {
+    ConstantFP::get(DoubleTy, 0),
+    ConstantFP::get(DoubleTy, 0),
+    ConstantInt::get(IntTy, 0, true),
+    ConstantInt::get(IntTy, Id, true),
+    Fn
+  };
   Constant *Struct = ConstantStruct::get(LoopDataTy, Fields);
   GlobalVariable *Data = new GlobalVariable(*Preheader->getParent()->getParent(),
       Struct->getType(),
@@ -263,7 +264,7 @@ bool LoopInstrumentation::runOnModule(Module &M)
     }
   }
 
-  declareLoopDataArr(LoopData);
+  declare(LoopData);
   return true;
 } 
 

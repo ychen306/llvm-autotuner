@@ -3,8 +3,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#define PROF_OUT "prof.out.csv"
-
+#define PROF_OUT "prof.out.csv" 
 
 /*
  * TODO

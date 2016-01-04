@@ -23,6 +23,7 @@
 #include <llvm/Support/ToolOutputFile.h>
 #include <llvm/Support/raw_ostream.h>
 
+#include <fstream> 
 #include <utility>
 #include <set>
 #include <memory>
@@ -68,6 +69,12 @@ struct LoopHeaderParser : public cl::parser<LoopHeader> {
     return false;
   }
 };
+
+static cl::opt<std::string>
+ExtractedListFile(
+    "e", 
+    cl::desc("file where name of extracted functions will be listed"),
+    cl::init("extracted.list"));
 
 static cl::opt<std::string>
 InputFilename(
@@ -174,10 +181,12 @@ bool LoopExtractor::runOnModule(Module &M)
 
     // actually extract loops
     for (Loop *L : ToExtract) {
-      CodeExtractor CE(DT, *L); 
+      CodeExtractor CE(DT, *L, true); 
       Function *Extracted = CE.extractCodeRegion(); 
       if (!Extracted) continue;
 
+      Extracted->setVisibility(GlobalValue::DefaultVisibility);
+      Extracted->setLinkage(GlobalValue::ExternalLinkage);
       ExtractedLoops.push_back(Extracted);
       doInline(Extracted, &CG); 
     }
@@ -256,16 +265,23 @@ int main(int argc, char **argv)
   PM.add(createBitcodeWriterPass(Out.os(), true));
   PM.run(*M.get()); 
 
-  // TODO
-  // report the mapping from original loop -> extracted bitcode file
-  //
+  std::ofstream ExtractedList;
+  ExtractedList.open(ExtractedListFile);
+
   // now remove everything in a new module except
   // the extracted loop
   for (unsigned i = 0, e = NewModules.size(); i != e; i++) {
     Module *NewModule = NewModules[i]; 
+    std::string ExtractedName = ExtractedLoops[i]->getName();
     std::vector<GlobalValue *> ToPreserve = {
-      NewModule->getFunction(ExtractedLoops[i]->getName()) };
-    tool_output_file ExtractedOut(newFileName(), EC, sys::fs::F_None);
+      NewModule->getFunction(ExtractedName) };
+
+    std::string BitcodeFName = newFileName();
+
+    // report name of extracted function
+    ExtractedList << ExtractedName << "\t" << BitcodeFName << '\n';
+
+    tool_output_file ExtractedOut(BitcodeFName, EC, sys::fs::F_None);
 
     // GVExtractor turns appending linkage into external linkage
     SmallVector<GlobalVariable *, 4> ToRemove;
@@ -285,4 +301,5 @@ int main(int argc, char **argv)
   }
 
   Out.keep();
+  ExtractedList.close();
 }

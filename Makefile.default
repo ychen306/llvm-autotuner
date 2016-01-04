@@ -4,20 +4,35 @@ LDFLAGS = $(shell llvm-config --ldflags --system-libs --libs $(LIBS))
 CXXFLAGS = $(shell llvm-config --cxxflags) -g
 CXX = clang++
 CC = clang
-EXES = extract-loops instrument-loops
+SRC_DIR = src
+BIN_DIR = bin
+OBJ_DIR = obj
+TOOLS = extract-loops instrument-loops create-server
+BC = prof.bc server.bc
 
-.PHONY: all clean prof
+EXES = $(TOOLS:%=$(BIN_DIR)/%)
+OBJS = $(BC:%=$(OBJ_DIR)/%)
 
-all: $(EXES) prof
+.PHONY: all clean build_obj build_exe
 
-extract-loops: extract-loops.o
+all: build_obj build_exe
+
+build_exe:
+	mkdir -p $(BIN_DIR) 
+	$(MAKE) $(EXES)
+
+build_obj:
+	mkdir -p $(OBJ_DIR)
+	$(MAKE) $(OBJS)
+
+obj/%.bc: $(SRC_DIR)/%.c
+	$(CC) -O3 -c -emit-llvm $^ -o $@
+
+%.o: $(SRC_DIR)/%.cpp
+	$(CXX) $^ $(CXXFLAGS) -c -o $@
+
+bin/%: %.o
 	$(CXX) $^ $(LDFLAGS) -o $@
-
-instrument-loops: instrument-loops.o
-	$(CXX) $^ $(LDFLAGS) -o $@
-
-prof: prof.c
-	$(CC) -O3 -c -emit-llvm prof.c -o prof.bc
 
 clean:
-	rm -rf *.o $(EXE)
+	rm -rf *.o $(EXES) $(OBJS)
