@@ -107,7 +107,6 @@ void LoopInstrumentation::declare(std::vector<Constant *> &LoopDataArr)
 }
 
 // to insert static declarations to support profiling
-// and register `prof_dump` with `atexit`
 void LoopInstrumentation::init(Module &M)
 {
   LLVMContext &Ctx = M.getContext();
@@ -146,26 +145,9 @@ void LoopInstrumentation::init(Module &M)
   // declare `void _prof_dump()`
   std::vector<Type *> NoArg;
   FunctionType *DumpFnTy = FunctionType::get(VoidTy, NoArg, false);
-  Function *Dump = Function::Create(DumpFnTy, Function::ExternalLinkage,
+  Function::Create(DumpFnTy, Function::ExternalLinkage,
       "_prof_dump", &M);
 
-  // declare `int atexit(<type of _prof_dump>)`
-  std::vector<Type *> AtexitArgs = { DumpFnTy->getPointerTo() };
-  FunctionType *AtexitFnTy = FunctionType::get(Type::getInt32Ty(Ctx), AtexitArgs, false);
-  Function *Atexit = Function::Create(AtexitFnTy, Function::ExternalLinkage, "atexit", &M);
-
-  // register _prof_dump to run before the exit of program
-  Function *Main = M.getFunction("main");
-  assert(Main && "Module doens't contain main"); 
-  BasicBlock &Entry = Main->getEntryBlock();
-  std::vector<Value *> Arg;
-  Arg.push_back(Dump);
-  Instruction &FirstInstr = *Entry.begin();
-  CallInst::Create(
-      Atexit, 
-      Arg,
-      Twine("prof.registerDump"),
-      &FirstInstr);
 }
 
 

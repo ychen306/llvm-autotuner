@@ -5,6 +5,8 @@
 
 #define PROF_OUT "prof.out.csv" 
 
+void _prof_dump() __attribute__ ((destructor));
+
 /*
  * TODO
  * make this work with threads
