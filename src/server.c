@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 #define ERROR '\0'
 #define SUCCESS '\1'
@@ -31,6 +32,8 @@ void _server_shutdown() __attribute__ ((destructor));
 
 FILE *out_file = NULL;
 int max_client; 
+
+int is_parent = 1;
 
 // make an error response
 static inline void *make_error(char *msg)
@@ -61,20 +64,29 @@ static inline void *respond(int fd, void *resp)
 static inline void dump_worker_data(const char *funcname, const char *sock_path)
 { 
     fprintf(out_file, "%s\t%s\n", funcname, sock_path);
+    fflush(out_file);
 } 
 
-void _server_spawn_worker(void (*orig_func)(void *), char *funcname, void *args)
+void _server_spawn_worker(
+        void (*orig_func)(void *), char *funcname, void *args, uint32_t *workers_to_spawn)
 { 
+#define CAN_SPAWN (is_parent && *workers_to_spawn > 0)
+
     // use the first byte as control byte
     // and the rest as lib_path
     char msg[LIBPATH_MAX_LEN+1]; 
     memset(msg, 0, sizeof msg);
 
     char sock_path[100] = "/tmp/tuning-XXXXXX";
-    mkdtemp(sock_path);
-    strcat(sock_path, "/socket");
+    if (CAN_SPAWN) {
+        mkdtemp(sock_path);
+        strcat(sock_path, "/socket");
+    }
     
-    if (fork()) { // body of worker process
+    // don't spawn more workers than asked for
+    if (CAN_SPAWN && fork()) { // body of worker process
+        is_parent = 0;
+
         daemon(1, 0);
         struct sockaddr_un addr;
         int sockfd;
@@ -133,9 +145,13 @@ void _server_spawn_worker(void (*orig_func)(void *), char *funcname, void *args)
         unlink(sock_path);
         exit(0);
     } else { // body of parent process 
-        dump_worker_data(funcname, sock_path);
+        if (CAN_SPAWN) {
+            *workers_to_spawn -= 1;
+            dump_worker_data(funcname, sock_path);
+        }
         orig_func(args); 
     }
+#undef CAN_SPAWN
 }
 
 void _server_init()

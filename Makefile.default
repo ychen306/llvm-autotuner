@@ -1,5 +1,4 @@
-# TODO be more precise about what libs to use
-LIBS = all
+LIBS = support irreader ipo bitwriter bitreader
 LDFLAGS = $(shell llvm-config --ldflags --system-libs --libs $(LIBS))
 CXXFLAGS = $(shell llvm-config --cxxflags) -g
 CXX = clang++

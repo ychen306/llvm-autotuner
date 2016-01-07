@@ -34,3 +34,7 @@ python tuning-cli.py loop --library-path=loop.so > time.txt
 python tuning-cli.py loop --kill
 ```
 see `python tuning-cli.py -h` for further notes on using the client to communicate with the server.
+### server.mak
+Makefile to building a server from a list of bitcode files. See source for details on usage.
+### prof.mak
+Makefile to profile top-level loops of a bitcode files. Profiling result will be dumped to `prof.out.csv`. See source for details on usage.

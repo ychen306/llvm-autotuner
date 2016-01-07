@@ -7,7 +7,10 @@ from argparse import ArgumentParser
 
 sizeof_float = len(struct.pack('f', 42.0))
 
+DEFAULT_WORKER_FILE = 'worker-data.txt'
+
 RESP_SIZE = 201
+
 ERROR = '\0'
 SUCCESS = '\1'
 
@@ -37,12 +40,16 @@ def run(sock, lib):
 
 def main(args): 
     with open(args.worker_file) as workers:
+        i = 0
         for worker in workers:
             func, sockpath = worker.split()
-            if func == args.func:
-                break
+            if func == args.func: 
+                if i == args.worker_id:
+                    break
+                print i, args.worker_id
+                i += 1
         else:
-            print >>sys.stderr, 'unknown function', func
+            print >>sys.stderr, 'unknown function', args.func 
             sys.exit(-1) 
 
     sock = get_socket(sockpath) 
@@ -61,10 +68,12 @@ if __name__ == '__main__':
             help='path to shared library contianing implementation of `func`')
     parser.add_argument('-w', '--worker-file',
             help='path to file listing worker data',
-            default='worker-data.txt')
+            default=DEFAULT_WORKER_FILE)
     parser.add_argument('-k', '--kill',
             help='kill worker responsible for running the library',
             action='store_true')
+    parser.add_argument('-i', '--worker-id',
+            help='worker id; workers running the same function are id\'d sequentially', default=0, type=int)
     args = parser.parse_args()
     if not args.kill and args.library_path is None: 
         parser.error('must specify path `library_path` to run')

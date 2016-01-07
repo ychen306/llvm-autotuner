@@ -22,6 +22,7 @@
 
 #include <vector>
 #include <algorithm>
+#include <map>
 #include <string>
 
 using namespace llvm;
@@ -36,7 +37,14 @@ cl::opt<std::string>
 OutputFilename( 
     "o", 
     cl::desc("Specify output file name"), 
-    cl::value_desc("<output file>"));
+    cl::value_desc("output file"));
+
+cl::opt<std::uint32_t>
+MaxWorkers(
+    "w",
+    cl::desc("maximum number of workers to spawn per function"),
+    cl::value_desc("worker count"),
+    cl::init(1));
 
 cl::list<std::string>
 FunctionsToFune(
@@ -45,11 +53,13 @@ FunctionsToFune(
     cl::value_desc("function"),
     cl::OneOrMore, cl::Prefix);
 
-// replace `call` with an equivalent call to `_server_spawn_worker`
+// replace a call instruction with an equivalent call to `_server_spawn_worker`
 // return the replaced call
 CallInst *emit_spawn_worker(CallInst *Call, Function *SpawnFn, Type *FuncTy)
 {
   Function *F = Call->getCalledFunction();
+  if (!F) return Call;
+
   std::string FnName = F->getName();
   if (std::find(FunctionsToFune.begin(), FunctionsToFune.end(), FnName) ==
       FunctionsToFune.end())
@@ -62,16 +72,29 @@ CallInst *emit_spawn_worker(CallInst *Call, Function *SpawnFn, Type *FuncTy)
   Constant *Str = ConstantDataArray::getString(Ctx, FnName);
   GlobalVariable *GV = new GlobalVariable(*M, Str->getType(),
       true, GlobalValue::PrivateLinkage,
-      Str, "prof.fn", nullptr,
+      Str, "tuning-server.fn", nullptr,
       GlobalVariable::NotThreadLocal,
       0);
   Constant *Zero = ConstantInt::get(Type::getInt32Ty(Ctx), 0);
   std::vector<Constant *> Idxs = {Zero, Zero};
   Constant *FnNamePtr = ConstantExpr::getInBoundsGetElementPtr(Str->getType(), GV, Idxs); 
 
+  // declare global variable to hold counter for this call site
+  static std::map<std::string, GlobalVariable *> Counters;
+  GlobalVariable *Counter = Counters[FnName]; 
+  if (!Counter) {
+    Type *I32Ty = Type::getInt32Ty(Ctx);
+    Constant *CounterInit = ConstantInt::get(I32Ty,
+        MaxWorkers);
+    Counters[FnName] = Counter = new GlobalVariable(*M, I32Ty,
+        false, GlobalValue::PrivateLinkage,
+        CounterInit, "tuning-server.worker-count", nullptr,
+        GlobalVariable::NotThreadLocal,
+        0); 
+  }
 
   // replace `call func(args)` with
-  // `call _server_spawn_worker(func, func-name, args) 
+  // `call _server_spawn_worker(func, func-name, args, counter) 
   BitCastInst *Arg = new BitCastInst(
       Call->getArgOperand(0),
       Type::getInt8PtrTy(Ctx),
@@ -85,7 +108,8 @@ CallInst *emit_spawn_worker(CallInst *Call, Function *SpawnFn, Type *FuncTy)
   std::vector<Value *> Args = {
     FuncPtr,
     FnNamePtr, 
-    Arg
+    Arg,
+    Counter
   };
   CallInst *CallToWorker = CallInst::Create(
       SpawnFn,
@@ -102,18 +126,21 @@ void create_server(Module &M)
   LLVMContext &Ctx = M.getContext();
   Type *I8PtrTy = Type::getInt8PtrTy(Ctx);
   Type *VoidTy = Type::getVoidTy(Ctx);
-
+  Type *I32PtrTy = Type::getInt32PtrTy(Ctx);
+  
   // declare
   // `void _server_spawn_worker(
   //      void *(*orig_func)(void *),
   //      char *func_name,
-  //      void *args)`
+  //      void *args,
+  //      uint32_t workers_to_spawn)`
   std::vector<Type *> GenericArgs = { I8PtrTy };
   FunctionType *GenericFnTy = FunctionType::get(VoidTy, GenericArgs, false);
   std::vector<Type *> SpawnArgs = {
     GenericFnTy->getPointerTo(),
     I8PtrTy,
-    I8PtrTy
+    I8PtrTy,
+    I32PtrTy
   };
   Function *SpawnFn = Function::Create(
       FunctionType::get(VoidTy, SpawnArgs, false),
