@@ -64,12 +64,17 @@ static inline void *respond(int fd, void *resp)
 static inline void dump_worker_data(const char *funcname, const char *sock_path)
 { 
     fprintf(out_file, "%s\t%s\n", funcname, sock_path);
+    // in case buffer gets written multiple times when
+    // forked processes exits
     fflush(out_file);
 } 
 
 void _server_spawn_worker(
         void (*orig_func)(void *), char *funcname, void *args, uint32_t *workers_to_spawn)
 { 
+    // a new worker can only be spawned if
+    // 1) current process if the parent process
+    // 2) doing so won't spawn more workers than asked for
 #define CAN_SPAWN (is_parent && *workers_to_spawn > 0)
 
     // use the first byte as control byte
@@ -83,7 +88,6 @@ void _server_spawn_worker(
         strcat(sock_path, "/socket");
     }
     
-    // don't spawn more workers than asked for
     if (CAN_SPAWN && fork()) { // body of worker process
         is_parent = 0;
 
