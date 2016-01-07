@@ -7,17 +7,18 @@
 
 void _prof_dump() __attribute__ ((destructor));
 
-/*
- * TODO
- * make this work with threads
- *
- * note that the time unit is clock ticks, not seconds
- */
+//
+// TODO
+// make this work with threads
+//
+// time unit is nano seconds
 struct loop_data {
-	double total_elapsed;
-	double cur_begin;
-	uint32_t running;
+	int64_t total_elapsed;
+	int64_t cur_begin_sec;
+	int64_t cur_begin_nsec;
+    uint32_t running;
 	uint32_t id;
+    uint32_t iterations;
 	char *fn_name;
 };
 
@@ -29,15 +30,24 @@ void _prof_begin(struct loop_data *loop)
 	if (loop->running) return;
 
 	loop->running = 1; 
-	loop->cur_begin = (double)clock();
+    struct timespec begin;
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
+    loop->cur_begin_sec = begin.tv_sec;
+    loop->cur_begin_nsec = begin.tv_nsec;
 }
 
 void _prof_end(struct loop_data *loop)
 {
 	if (!loop->running) return;
 
+    struct timespec end;
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
+    uint64_t elapsed = 1e9 * (end.tv_sec - loop->cur_begin_sec) +
+        (end.tv_nsec - loop->cur_begin_nsec);
+
 	loop->running = 0;
-	loop->total_elapsed += ((double)clock()) - loop->cur_begin;
+	loop->total_elapsed += elapsed;
+    loop->iterations += 1;
 }
 
 void _prof_dump()
@@ -45,13 +55,13 @@ void _prof_dump()
 	unsigned i;
 	FILE *out = fopen(PROF_OUT, "wb");
 
-	fprintf(out, "function,loop id,time spent\n");
+	fprintf(out, "function,loop id,avg time spent\n");
 	for (i = 0; i < _prof_num_loops; i++) {
 		struct loop_data *loop = _prof_loops[i]; 
-		fprintf(out, "%s,%d,%f\n",
+		fprintf(out, "%s,%d,%ld\n",
 				loop->fn_name,
 				(int) loop->id,
-				loop->total_elapsed);
+				loop->total_elapsed/loop->iterations);
 	}
 
 	fclose(out);

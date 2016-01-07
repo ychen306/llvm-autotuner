@@ -96,10 +96,10 @@ void LoopInstrumentation::declare(std::vector<Constant *> &LoopDataArr)
       0);
 
   // also define `_prof_num_loop`
-  Type *IntTy = Type::getInt32Ty(curM->getContext());
-  Constant *NumLoop = ConstantInt::get(IntTy, NumLoops, true);
+  Type *Int32Ty = Type::getInt32Ty(curM->getContext());
+  Constant *NumLoop = ConstantInt::get(Int32Ty, NumLoops, true);
   new GlobalVariable(*curM,
-      IntTy,
+      Int32Ty,
       true, GlobalValue::ExternalLinkage,
       NumLoop, "_prof_num_loops", nullptr,
       GlobalVariable::NotThreadLocal,
@@ -114,17 +114,21 @@ void LoopInstrumentation::init(Module &M)
   // declare 
   // ```
   // struct loop_data {
-  // 	double total_elapsed;
-  // 	double cur_begin;
+  // 	uint64_t total_elapsed;
+  // 	uint64_t cur_begin_sec;
+  // 	uint64_t cur_begin_nsec;
   // 	uint32_t running;
   // 	uint32_t id;
+  // 	uint32_t iterations;
   // 	char *fn_name;
   // };
   // ``` 
   LoopDataTy = StructType::create(Ctx, "LoopData");
   std::vector<Type *> Fields = {
-    Type::getDoubleTy(Ctx),
-    Type::getDoubleTy(Ctx),
+    Type::getInt64Ty(Ctx),
+    Type::getInt64Ty(Ctx),
+    Type::getInt64Ty(Ctx),
+    Type::getInt32Ty(Ctx),
     Type::getInt32Ty(Ctx),
     Type::getInt32Ty(Ctx),
     Type::getInt8PtrTy(Ctx)
@@ -163,22 +167,24 @@ Constant *LoopInstrumentation::instrumentLoop(Constant *Fn, Loop *L, unsigned Id
   BasicBlock* Preheader = L->getLoopPreheader();
 
   LLVMContext &Ctx = Preheader->getContext();
-  Type *DoubleTy = Type::getDoubleTy(Ctx);
-  Type *IntTy = Type::getInt32Ty(Ctx);
+  Type *Int32Ty = Type::getInt32Ty(Ctx),
+       *Int64Ty = Type::getInt64Ty(Ctx);
 
   // declare instance of `struct loop_data` 
   std::vector<Constant *> Fields = {
-    ConstantFP::get(DoubleTy, 0),
-    ConstantFP::get(DoubleTy, 0),
-    ConstantInt::get(IntTy, 0, true),
-    ConstantInt::get(IntTy, Id, true),
+    ConstantInt::get(Int64Ty, 0, true),
+    ConstantInt::get(Int64Ty, 0, true),
+    ConstantInt::get(Int64Ty, 0, true),
+    ConstantInt::get(Int32Ty, 0, true),
+    ConstantInt::get(Int32Ty, Id, true),
+    ConstantInt::get(Int32Ty, 0, true),
     Fn
   };
-  Constant *Struct = ConstantStruct::get(LoopDataTy, Fields);
+  Constant *LoopDataInit = ConstantStruct::get(LoopDataTy, Fields);
   GlobalVariable *Data = new GlobalVariable(*Preheader->getParent()->getParent(),
-      Struct->getType(),
-      false, GlobalValue::ExternalLinkage,
-      Struct, "prof.data", nullptr,
+      LoopDataInit->getType(),
+      false, GlobalValue::PrivateLinkage,
+      LoopDataInit, "prof.data", nullptr,
       GlobalVariable::NotThreadLocal,
       0);
 
