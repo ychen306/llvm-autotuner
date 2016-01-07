@@ -136,9 +136,12 @@ void _server_spawn_worker(
                 if (!func) respond(cli_fd, make_error(CANT_LOAD_FUNC));
 
                 // run the function
-                clock_t begin = clock(); 
-                func(args);
-                float time_spent = (float) (clock() - begin);
+                struct timespec begin, end;
+                clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
+                func(args); 
+                clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
+                float time_spent = (float) ((end.tv_sec-begin.tv_sec) * 1e9 +
+                        (end.tv_nsec - begin.tv_nsec));
 
                 respond(cli_fd, make_report(time_spent));
             }
