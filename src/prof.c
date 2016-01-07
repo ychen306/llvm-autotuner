@@ -18,7 +18,7 @@ struct loop_data {
 	int64_t cur_begin_nsec;
     uint32_t running;
 	uint32_t id;
-    uint32_t iterations;
+    int32_t iterations;
 	char *fn_name;
 };
 
@@ -55,13 +55,14 @@ void _prof_dump()
 	unsigned i;
 	FILE *out = fopen(PROF_OUT, "wb");
 
-	fprintf(out, "function,loop id,avg time spent\n");
+	fprintf(out, "function,loop id,avg time spent,times run\n");
 	for (i = 0; i < _prof_num_loops; i++) {
 		struct loop_data *loop = _prof_loops[i]; 
-		fprintf(out, "%s,%d,%ld\n",
+		fprintf(out, "%s,%d,%ld,%d\n",
 				loop->fn_name,
 				(int) loop->id,
-				loop->total_elapsed/loop->iterations);
+				loop->total_elapsed/loop->iterations,
+                loop->iterations);
 	}
 
 	fclose(out);
