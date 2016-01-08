@@ -190,10 +190,6 @@ std::string newFileName()
   return OuputPrefix + "." + std::to_string(id++) + ".bc";
 }
 
-namespace llvm {
-  void initializeInlinerImplPass(PassRegistry &Registry);
-};
-
 int main(int argc, char **argv)
 {
   // Print a stack trace if we signal out.
