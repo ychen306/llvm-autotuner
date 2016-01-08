@@ -82,14 +82,6 @@ InputFilename(
     cl::desc("<input file>"),
     cl::Required);
 
-static cl::opt<unsigned>
-InlineDepth(
-    "i",
-    cl::desc("Specify inline depth for extracted loop"),
-    cl::value_desc("inline-depth"),
-    cl::init(3),
-    cl::Optional);
-
 static cl::opt<std::string>
 OuputPrefix(
     "p",
@@ -100,15 +92,12 @@ OuputPrefix(
 static cl::list<LoopHeader, bool, LoopHeaderParser>
 LoopsToExtract(
     "l",
-    cl::desc("Specify loop(s) to extract. Describe a loop in this format: \"[function],[loop header]\""),
+    cl::desc("Specify loop(s) to extract.\nDescribe a loop in this format:\n\"[function],[loop header]\""),
     cl::OneOrMore, cl::Prefix);
 
 
 struct LoopExtractor : public ModulePass {
   static char ID;
-
-  // inline as much as possible within the body of `Caller`
-  void doInline(Function *Caller, CallGraph * CG);
 
   virtual bool runOnModule(Module &) override;
 
@@ -137,7 +126,6 @@ INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_END(LoopExtractor, "", "", true, true)
 
 static std::vector<GlobalValue *> ExtractedLoops;
-static std::vector<Module *> NewModules;
 
 bool LoopExtractor::runOnModule(Module &M)
 { 
@@ -188,41 +176,12 @@ bool LoopExtractor::runOnModule(Module &M)
       Extracted->setVisibility(GlobalValue::DefaultVisibility);
       Extracted->setLinkage(GlobalValue::ExternalLinkage);
       ExtractedLoops.push_back(Extracted);
-      doInline(Extracted, &CG); 
     }
     ToExtract.resize(0);
 
   }
 
-  // each extracted loop will reside in its own module
-  for (unsigned i = 0, e = ExtractedLoops.size(); i != e; i++)
-    NewModules.push_back(CloneModule(&M));
-
   return Changed;
-}
-
-void LoopExtractor::doInline(Function *Caller, CallGraph *CG)
-{
-  std::vector<CallSite> ToInline;
-  InlineFunctionInfo IFI;
-
-  for (unsigned i = 0; i < InlineDepth; i++) {
-
-    for (BasicBlock &BB : *Caller) {
-      for (Instruction &Inst : BB) { 
-        if (isa<InvokeInst>(&Inst) || isa<CallInst>(&Inst))
-          ToInline.push_back(CallSite(&Inst));
-      }
-    }
-
-    bool Inlined = false; 
-    for (CallSite &CS : ToInline) {
-      Inlined = InlineFunction(CS, IFI) || Inlined;
-    }
-
-    if (!Inlined) break;
-    ToInline.resize(0);
-  }
 }
 
 std::string newFileName()
@@ -230,6 +189,10 @@ std::string newFileName()
   static int id = 0;
   return OuputPrefix + "." + std::to_string(id++) + ".bc";
 }
+
+namespace llvm {
+  void initializeInlinerImplPass(PassRegistry &Registry);
+};
 
 int main(int argc, char **argv)
 {
@@ -260,6 +223,15 @@ int main(int argc, char **argv)
   Extraction.add(new LoopExtractor());
   Extraction.run(*M.get()); 
 
+  // we only want to do inline within the body of extracted
+  // code but not the whole module, so we clone the module
+  // and do inline there, which will be "split" into several modules
+  // to host the extracted code separately
+  Module *InlinedModule = CloneModule(M.get());
+  legacy::PassManager Inlining;
+  Inlining.add(createFunctionInliningPass());
+  Inlining.run(*InlinedModule);
+
   legacy::PassManager PM;
   PM.add(createGVExtractionPass(ExtractedLoops, true));
   PM.add(createBitcodeWriterPass(Out.os(), true));
@@ -270,11 +242,10 @@ int main(int argc, char **argv)
 
   // now remove everything in a new module except
   // the extracted loop
-  for (unsigned i = 0, e = NewModules.size(); i != e; i++) {
-    Module *NewModule = NewModules[i]; 
-    std::string ExtractedName = ExtractedLoops[i]->getName();
-    std::vector<GlobalValue *> ToPreserve = {
-      NewModule->getFunction(ExtractedName) };
+  for (GlobalValue *Extracted : ExtractedLoops) {
+    Module *NewModule = CloneModule(InlinedModule); 
+    std::string ExtractedName = Extracted->getName();
+    std::vector<GlobalValue *> ToPreserve { NewModule->getFunction(ExtractedName) };
 
     std::string BitcodeFName = newFileName();
 
