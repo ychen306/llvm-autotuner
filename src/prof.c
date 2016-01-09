@@ -35,7 +35,9 @@ static void sample(int sig, siginfo_t *si, void *uc)
     uint32_t i;
     for (i = 0; i < _prof_num_loops; i++) {
         struct loop_profile *loop = _prof_loops[i]; 
-        if (loop->running) loop->sampled++;
+        // we use 1 and 0 to represent true and false
+        // doing it this way avoids branching
+        loop->sampled += loop->running;
     } 
 
     total_sampled += 1;

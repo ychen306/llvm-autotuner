@@ -1,6 +1,6 @@
 Makefile
 bin/
-prof.out.csv
+loop-prof.out.csv
 extracted.list
 
 # llvm object files
