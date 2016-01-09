@@ -10,7 +10,7 @@ For example, to profile top-level loops in `fib.bc`, one can do
 # make generates `prof.bc'
 llvm-link fib.prof.bc prof.bc -o - | llc -filetype=obj -o fib.o
 cc fib.o -o fib
-./fib && cat prof.out.csv
+./fib && cat loop-prof.out.csv
 ```
 ### create-server
 Transforms a bitcode file into a "server" that runs specified functions upon request and reports the time it takes to run those functions. Every function call will have its own worker process responsible for actually performing the call (such transformation is however upperbounded so as not to consume too much resource). Multiple functions can be specified. For example, to make a server that runs `loop` (and `loop` only) repeatedly in `x.bc`, one can do
@@ -37,4 +37,4 @@ see `python tuning-cli.py -h` for further notes on using the client to communica
 ### server.mak
 Makefile to building a server from a list of bitcode files. See source for details on usage.
 ### prof.mak
-Makefile to profile top-level loops of a bitcode files. Profiling result will be dumped to `prof.out.csv`. See source for details on usage.
+Makefile to profile top-level loops of a bitcode files. Profiling result will be dumped to `loop-prof.out.csv`. See source for details on usage.

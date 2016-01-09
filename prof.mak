@@ -1,4 +1,4 @@
-# makefile for generating `prof.out.csv` for a bitcode file
+# makefile for generating `loop-prof.out.csv` for a bitcode file
 
 # begin config
 BC = raytracer.bc
@@ -13,7 +13,7 @@ INSTRUMENTED_BC = $(BC:%.bc=%.prof.bc)
 OBJ = $(BC:%.bc=%.prof.o)
 EXE = $(BC:%.bc=%.prof.exe)
 
-all: prof.out.csv
+all: loop-prof.out.csv
 
 $(INSTRUMENTED_BC): $(BC)
 	$(BIN_DIR)/instrument-loops $^ -o $@
@@ -22,10 +22,10 @@ $(OBJ): $(OBJ_DIR)/prof.bc $(INSTRUMENTED_BC)
 	llvm-link $^ -o - | llc -filetype=obj -o $@
 
 $(EXE): $(OBJ)
-	$(CXX) $^ -o $@
+	$(CXX) $^ -o $@ -lrt
 
-prof.out.csv: $(EXE) 
+loop-prof.out.csv: $(EXE) 
 	./$(EXE) $(ARGS)
 
 clean:
-	rm -f $(EXE) $(OBJ) $(INSTRUMENTED_BC) prof.out.csv
+	rm -f $(EXE) $(OBJ) $(INSTRUMENTED_BC) loop-prof.out.csv

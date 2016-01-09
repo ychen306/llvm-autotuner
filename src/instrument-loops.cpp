@@ -62,17 +62,14 @@ struct LoopInstrumentation : public ModulePass {
 
   virtual bool runOnModule(Module &) override; 
 
-  StructType *LoopDataTy;
-  Function *BeginFn, *EndFn;
+  StructType *LoopProfileTy;
 
   // insert code to profile a loop
   // return `struct loop_data` declared for the loop
   Constant *instrumentLoop(Constant *Fn, Loop *L, unsigned Id);
 
-  // declare `extern struct loop_data **loops` for profiler
+  // declare and initialize data for profiler
   void declare(std::vector<Constant *> &);
-
-  void init(Module &M);
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<LoopInfoWrapperPass>();
@@ -82,11 +79,11 @@ struct LoopInstrumentation : public ModulePass {
   const char *getPassName() const override { return "LoopInstrumentation pass"; }
 };
 
-void LoopInstrumentation::declare(std::vector<Constant *> &LoopDataArr)
+void LoopInstrumentation::declare(std::vector<Constant *> &LoopProfileArr)
 { 
-  unsigned NumLoops = LoopDataArr.size();
-  ArrayType *ArrTy = ArrayType::get(LoopDataTy->getPointerTo(), NumLoops);
-  Constant *ArrContent = ConstantArray::get(ArrTy, LoopDataArr);
+  unsigned NumLoops = LoopProfileArr.size();
+  ArrayType *ArrTy = ArrayType::get(LoopProfileTy->getPointerTo(), NumLoops);
+  Constant *ArrContent = ConstantArray::get(ArrTy, LoopProfileArr);
   // declare `_prof_loops`
   new GlobalVariable(*curM,
       ArrTy,
@@ -106,61 +103,21 @@ void LoopInstrumentation::declare(std::vector<Constant *> &LoopDataArr)
       0); 
 }
 
-// to insert static declarations to support profiling
-void LoopInstrumentation::init(Module &M)
-{
-  LLVMContext &Ctx = M.getContext();
-
-  // declare 
-  // ```
-  // struct loop_data {
-  // 	uint64_t total_elapsed;
-  // 	uint64_t cur_begin_sec;
-  // 	uint64_t cur_begin_nsec;
-  // 	uint32_t running;
-  // 	uint32_t id;
-  // 	uint32_t iterations;
-  // 	char *fn_name;
-  // };
-  // ``` 
-  LoopDataTy = StructType::create(Ctx, "LoopData");
-  std::vector<Type *> Fields = {
-    Type::getInt64Ty(Ctx),
-    Type::getInt64Ty(Ctx),
-    Type::getInt64Ty(Ctx),
-    Type::getInt32Ty(Ctx),
-    Type::getInt32Ty(Ctx),
-    Type::getInt32Ty(Ctx),
-    Type::getInt8PtrTy(Ctx)
-  };
-  LoopDataTy->setBody(Fields);
-
-  Type *VoidTy = Type::getVoidTy(Ctx);
-
-  // declare `void _prof_begin(struct loop_data *loop)` 
-  std::vector<Type *> BeginArgs = { LoopDataTy->getPointerTo() };
-  FunctionType *BeginFnTy = FunctionType::get(VoidTy, BeginArgs, false); 
-  BeginFn = Function::Create(BeginFnTy, Function::ExternalLinkage, "_prof_begin", &M);
-
-  // declare `void _prof_end(struct loop_data *loop)`,
-  // which has the same type as `_prof_begin`
-  EndFn = Function::Create(BeginFnTy, Function::ExternalLinkage, "_prof_end", &M);
-
-  // declare `void _prof_dump()`
-  std::vector<Type *> NoArg;
-  FunctionType *DumpFnTy = FunctionType::get(VoidTy, NoArg, false);
-  Function::Create(DumpFnTy, Function::ExternalLinkage,
-      "_prof_dump", &M);
-
-}
-
-
 char LoopInstrumentation::ID = 1;
 
 INITIALIZE_PASS_BEGIN(LoopInstrumentation, "", "", true, true)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_END(LoopInstrumentation, "", "", true, true) 
 
+// create an IRBuilder that inserts instructions in the first
+// non-phi and non-pad instructions
+IRBuilder<> createFrontInserter(BasicBlock *BB)
+{
+  BasicBlock::iterator I(BB->getFirstNonPHI());
+  while (isa<LandingPadInst>(I)) ++I; 
+
+  return IRBuilder<> (BB, I);
+}
 
 Constant *LoopInstrumentation::instrumentLoop(Constant *Fn, Loop *L, unsigned Id)
 { 
@@ -171,58 +128,87 @@ Constant *LoopInstrumentation::instrumentLoop(Constant *Fn, Loop *L, unsigned Id
        *Int64Ty = Type::getInt64Ty(Ctx);
 
   // declare instance of `struct loop_data` 
-  std::vector<Constant *> Fields = {
-    ConstantInt::get(Int64Ty, 0, true),
-    ConstantInt::get(Int64Ty, 0, true),
-    ConstantInt::get(Int64Ty, 0, true),
-    ConstantInt::get(Int32Ty, 0, true),
-    ConstantInt::get(Int32Ty, Id, true),
-    ConstantInt::get(Int32Ty, 0, true),
-    Fn
+  std::vector<Constant *> Fields {
+    Fn,
+    ConstantInt::get(Int32Ty, Id),
+    ConstantInt::get(Int32Ty, 0),
+    ConstantInt::get(Int64Ty, 0),
+    ConstantInt::get(Int64Ty, 0)
   };
-  Constant *LoopDataInit = ConstantStruct::get(LoopDataTy, Fields);
-  GlobalVariable *Data = new GlobalVariable(*Preheader->getParent()->getParent(),
-      LoopDataInit->getType(),
+  Constant *LoopProfileInit = ConstantStruct::get(LoopProfileTy, Fields);
+  GlobalVariable *Profile = new GlobalVariable(*curM,
+      LoopProfileInit->getType(),
       false, GlobalValue::PrivateLinkage,
-      LoopDataInit, "prof.data", nullptr,
+      LoopProfileInit, "prof.loop", nullptr,
       GlobalVariable::NotThreadLocal,
       0);
 
-  std::vector<Value *> ProfArg = { Data };
+  std::vector<Value *> ProfArg = { Profile };
 
-  // insert a call to `_prof_begin` in the end of preheader
-  Instruction *Terminator = Preheader->getTerminator();
-  CallInst::Create(
-      BeginFn,
-      ProfArg,
-      Twine(""),
-      Terminator); 
+  IRBuilder<> Builder = createFrontInserter(Preheader);
+  Constant *Zero = ConstantInt::get(Int32Ty, 0),
+           *RunningIdx = ConstantInt::get(Int32Ty, 2),
+           *RunsIdx = ConstantInt::get(Int32Ty, 3),
+           *One = ConstantInt::get(Int32Ty, 1);
+  std::vector<Value *> RunningIndexes { Zero, RunningIdx },
+    RunsIndexes { Zero, RunsIdx };
+  Value *RunningAddr = Builder.CreateInBoundsGEP(
+      LoopProfileTy,
+      Profile, 
+      RunningIndexes); 
+  // set `running` to 1
+  Builder.CreateStore(One, RunningAddr);
+  Value *RunsAddr = Builder.CreateInBoundsGEP(
+      LoopProfileTy,
+      Profile,
+      RunsIndexes);
+  Value *OldRuns = Builder.CreateLoad(RunsAddr);
+  Value *NewRuns = Builder.CreateBinOp(Instruction::Add, OldRuns,
+      ConstantInt::get(Int64Ty, 1));
+  // increment `runs`
+  Builder.CreateStore(NewRuns, RunsAddr);
   
   SmallVector<BasicBlock *, 4> Exits;
   L->getExitBlocks(Exits);
-  // insert a call to `_prof_end` in the beginning of every exit blocks
-  // TODO conside laddingpad, phi, etc
+  // set `running` to 0 in exit blocks
   for (BasicBlock *BB : Exits) { 
-    BasicBlock::iterator I(BB->getFirstNonPHI());
-    while (isa<LandingPadInst>(I)) ++I;
-    CallInst::Create(
-        EndFn,
-        ProfArg,
-        Twine(""),
-        &*I);
+    IRBuilder<> Builder = createFrontInserter(BB);
+    Value *RunningAddr = Builder.CreateInBoundsGEP(
+        LoopProfileTy,
+        Profile, 
+        RunningIndexes); 
+    Builder.CreateStore(Zero, RunningAddr);
   }
   
-  return Data;
+  return Profile;
 }
 
 bool LoopInstrumentation::runOnModule(Module &M)
 { 
   curM = &M;
-  init(M);
-
   LLVMContext &Ctx = M.getContext();
 
-  std::vector<Constant *> LoopData;
+  // declare 
+  // ```
+  // struct loop_profile { 
+  //     char *func;
+  //     int32_t header_id;
+  //     int32_t running;
+  //     int64_t runs;
+  //     int64_t sampled;
+  // };
+  // ``` 
+  LoopProfileTy = StructType::create(Ctx, "LoopProfile");
+  std::vector<Type *> Fields {
+    Type::getInt8PtrTy(Ctx),
+    Type::getInt32Ty(Ctx),
+    Type::getInt32Ty(Ctx),
+    Type::getInt64Ty(Ctx),
+    Type::getInt64Ty(Ctx),
+  };
+  LoopProfileTy->setBody(Fields);
+
+  std::vector<Constant *> LoopProfile;
   for (Function &F : M.getFunctionList()) {
     // external function
     if (F.empty()) continue;
@@ -248,11 +234,11 @@ bool LoopInstrumentation::runOnModule(Module &M)
       if (!L || L->getParentLoop() ||
           !L->isLoopSimplifyForm() || L->getHeader() != &BB) continue;
 
-      LoopData.push_back(instrumentLoop(FnName, L, i));
+      LoopProfile.push_back(instrumentLoop(FnName, L, i));
     }
   }
 
-  declare(LoopData);
+  declare(LoopProfile);
   return true;
 } 
 
