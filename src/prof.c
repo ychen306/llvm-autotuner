@@ -12,9 +12,7 @@ void _prof_dump() __attribute__ ((destructor));
 struct loop_profile { 
     char *func;
     int32_t header_id;
-    int32_t running;
     int64_t runs;
-    int64_t sampled;
 };
 
 // sample every 1ms
@@ -22,7 +20,11 @@ struct loop_profile {
 
 extern uint32_t _prof_num_loops;
 
-extern struct loop_profile *_prof_loops[];
+extern struct loop_profile _prof_loops[];
+
+extern int64_t _prof_loops_sampled[];
+
+extern int64_t _prof_loops_running[];
 
 static timer_t timer_id;
 
@@ -33,11 +35,10 @@ static void sample(int sig, siginfo_t *si, void *uc)
     if (si->si_value.sival_ptr != &timer_id) return;
 
     uint32_t i;
+
+#pragma clang loop vectorize(enable)
     for (i = 0; i < _prof_num_loops; i++) {
-        struct loop_profile *loop = _prof_loops[i]; 
-        // we use 1 and 0 to represent true and false
-        // doing it this way avoids branching
-        loop->sampled += loop->running;
+        _prof_loops_sampled[i] += _prof_loops_running[i];
     } 
 
     total_sampled += 1;
@@ -74,12 +75,12 @@ void _prof_dump()
 
     fprintf(out, "function,header-id,runs,%% time\n");
     for (i = 0; i < _prof_num_loops; i++) {
-        struct loop_profile *loop = _prof_loops[i];
-        fprintf(out, "%s,%d,%ld,%.4f\n",
+        struct loop_profile *loop = &_prof_loops[i];
+        fprintf(out, "%s,%d,%ld,%.2f\n",
                 loop->func,
                 loop->header_id,
                 loop->runs,
-                ((double)loop->sampled)/total_sampled);
+                ((double)_prof_loops_sampled[i])/total_sampled*100);
     }
 
 	fclose(out);
