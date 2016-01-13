@@ -2,7 +2,7 @@
 ### extract-loops
 Splits a module into multiple modules given loops that the user wants to extract. After running the program, there will be n + 1 new modules, where n is the number of loops specified by the user.
 ### instrument-loops
-Inserts instructions to profile all top-level loops within a module. After instrumenting the module, use `llvm-link` to link with `prof.bc`. Instrumented module will automatically dump the profile output to `prof.out.csv` after execution.
+Inserts instructions to profile all top-level loops within a module. After instrumenting the module, use `llvm-link` to link with `prof.bc`. Instrumented module will automatically dump the profile output to `loop-prof.basic.csv` and `loop-prof.graph.csv` after execution. `loop-prof.basic.csv` has basic information such as how long a loop was run during execution of the program. `loop-prof.graph.csv` shows the "dynamic call graph" (well... it's not really a "call graph" since loops don't call loops literally. but you get the idea) in the form of a table with the row being caller and column being callee. E.g. entry (0, 1) being 25% means that the first loop spends a quarter of its time running the second loop. The index in `loop-prof.graph.csv` implicitly matches the row number in `loop-prof.basic.csv`; this means that the first loop's detail info (such as what function it's in) can be found in the first row of `loop-prof.basic.csv`.
  
 For example, to profile top-level loops in `fib.bc`, one can do
 ```shell
@@ -10,7 +10,7 @@ For example, to profile top-level loops in `fib.bc`, one can do
 # make generates `prof.bc'
 llvm-link fib.prof.bc prof.bc -o - | llc -filetype=obj -o fib.o
 cc fib.o -o fib
-./fib && cat loop-prof.out.csv
+./fib && cat loop-prof.basic.csv loop-prof.graph.csv
 ```
 ### create-server
 Transforms a bitcode file into a "server" that runs specified functions upon request and reports the time it takes to run those functions. Every function call will have its own worker process responsible for actually performing the call (such transformation is however upperbounded so as not to consume too much resource). Multiple functions can be specified. For example, to make a server that runs `loop` (and `loop` only) repeatedly in `x.bc`, one can do
@@ -37,4 +37,4 @@ see `python tuning-cli.py -h` for further notes on using the client to communica
 ### server.mak
 Makefile to building a server from a list of bitcode files. See source for details on usage.
 ### prof.mak
-Makefile to profile top-level loops of a bitcode files. Profiling result will be dumped to `loop-prof.out.csv`. See source for details on usage.
+Makefile to profile top-level loops of a bitcode files. Profiling result will be dumped to `loop-prof.basic.csv` and `loop-prof.graph.csv`. See source for details on usage.

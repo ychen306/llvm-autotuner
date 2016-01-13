@@ -1,87 +1,163 @@
 #include <time.h>
+#include <sys/time.h>
 #include <stdint.h> 
 #include <stdlib.h>
 #include <stdio.h>
 #include <signal.h>
+#include <string.h>
 
-#define PROF_OUT "loop-prof.out.csv" 
+#define PROF_SIMPLE_OUT "loop-prof.basic.csv" 
+#define PROF_GRAPH_OUT "loop-prof.graph.csv"
+
+// sample every 1ms
+#define SAMPLING_INTERVAL 1000
 
 void _prof_init() __attribute__ ((constructor));
 void _prof_dump() __attribute__ ((destructor));
 
-struct loop_profile { 
+struct loop_data { 
     char *func;
     int32_t header_id;
     int64_t runs;
 };
 
-// sample every 1ms
-#define SAMPLING_INTERVAL 1000
-
 extern uint32_t _prof_num_loops;
 
-extern struct loop_profile _prof_loops[];
+extern struct loop_data _prof_loops[];
 
-extern int64_t _prof_loops_sampled[];
+extern uint32_t _prof_loops_running[];
 
-extern int64_t _prof_loops_running[];
+static struct timespec begin;
 
-static timer_t timer_id;
+struct fraction { 
+    size_t a, b; 
+}; 
 
-int64_t total_sampled;
+// a profile is an array of fraction (of time) spent in a loop
+//
+// e.g. if A spends 50% of the time calling B, A is run
+// 25% of the sample, and C is called by B 25% of the time
+// then A's profile will be [1/4(A), 1/2(B)]
+// (note that the entry of a loop itself is absolute and the 
+// rest is relative)
+typedef struct fraction *profile_t;
 
-static void sample(int sig, siginfo_t *si, void *uc)
+static profile_t *profiles;
+
+static inline float frac2num(struct fraction *frac)
 { 
-    if (si->si_value.sival_ptr != &timer_id) return;
+    return ((float) frac->a) / frac->b;
+}
 
-    uint32_t i;
+// record that `caller` called `called_idx`
+static inline void record_hit(profile_t caller, size_t callee_idx)
+{ 
+    struct fraction *frac = &caller[callee_idx];
+    frac->a++;
+    frac->b++;
+}
 
-#pragma clang loop vectorize(enable)
+// record that `caller` didn't call `called_idx`
+static inline void record_miss(profile_t caller, size_t callee_idx)
+{
+    caller[callee_idx].b++;
+}
+
+static void create_profiles()
+{
+    profiles = malloc(sizeof (profile_t) * _prof_num_loops);
+    size_t i;
+    for (i = 0; i < _prof_num_loops; i++) 
+        profiles[i] = calloc(sizeof (struct fraction), _prof_num_loops);
+}
+
+static void collect_sample(int signo)
+{ 
+    // update profiles of all the loops given a new sample
+    size_t i, j;
     for (i = 0; i < _prof_num_loops; i++) {
-        _prof_loops_sampled[i] += _prof_loops_running[i];
-    } 
+        if (_prof_loops_running[i]) record_hit(profiles[i], i);
+        else record_miss(profiles[i], i);
 
-    total_sampled += 1;
+        for (j = i+1; j < _prof_num_loops; j++) { 
+            if (_prof_loops_running[i] && _prof_loops_running[j]) { 
+                if (_prof_loops_running[i] < _prof_loops_running[j]) {
+                    // i called j 
+                    record_hit(profiles[i], j);
+                    record_miss(profiles[j], i);
+                } else {
+                    // j called i
+                    record_hit(profiles[j], i);
+                    record_miss(profiles[i], j);
+                }
+            } else if (_prof_loops_running[i]) {
+                record_miss(profiles[i], j);
+            } else if (_prof_loops_running[j]) {
+                record_miss(profiles[j], i);
+            }
+        }
+    }
 }
  
 void _prof_init() 
 { 
-    struct itimerspec timerspec;
-    struct sigaction sa;
-    struct sigevent sev;
-
-    sa.sa_flags = SA_SIGINFO;
-    sa.sa_sigaction = sample;
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGUSR1, &sa, NULL);
-
-    sev.sigev_notify = SIGEV_SIGNAL;
-    sev.sigev_signo = SIGUSR1;
-    sev.sigev_value.sival_ptr = &timer_id;
-    timer_create(CLOCK_PROCESS_CPUTIME_ID, &sev, &timer_id); 
+    struct itimerval timerspec;
 
     timerspec.it_interval.tv_sec = 0;
-    timerspec.it_interval.tv_nsec = SAMPLING_INTERVAL;
+    timerspec.it_interval.tv_usec = SAMPLING_INTERVAL;
     timerspec.it_value.tv_sec = 0;
-    timerspec.it_value.tv_nsec = SAMPLING_INTERVAL;
+    timerspec.it_value.tv_usec = SAMPLING_INTERVAL;
 
-    timer_settime(&timer_id, 0, &timerspec, NULL);
+    if (signal(SIGPROF, collect_sample) == SIG_ERR) {
+        perror("Unable to catch SIGPROF");
+        exit(1);
+    }
+
+    setitimer(ITIMER_PROF, &timerspec, NULL);
+
+    create_profiles();
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
 }
 
 void _prof_dump()
 { 
-	uint32_t i;
-	FILE *out = fopen(PROF_OUT, "wb"); 
+    // disarm timer
+    struct itimerval timerspec;
+    memset(&timerspec, 0, sizeof timerspec);
+    setitimer(SIGPROF, &timerspec, NULL);
 
-    fprintf(out, "function,header-id,runs,%% time\n");
-    for (i = 0; i < _prof_num_loops; i++) {
-        struct loop_profile *loop = &_prof_loops[i];
-        fprintf(out, "%s,%d,%ld,%.2f\n",
+    // time the process
+    struct timespec end;
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
+    // in ms
+    long long int elapsed = (end.tv_sec - begin.tv_sec)*1e3 +
+        (end.tv_nsec - begin.tv_nsec) / 1e6;
+
+    FILE *basic_out = fopen(PROF_SIMPLE_OUT, "wb"),
+         *graph_out = fopen(PROF_GRAPH_OUT, "wb");
+
+    fprintf(basic_out, "function,header-id,runs,time(pct),time(ms)");
+    size_t i, j;
+    for (i = 0; i < _prof_num_loops; i++) { 
+        struct loop_data *loop = &_prof_loops[i];
+        float pct = frac2num(&profiles[i][i]); 
+        fprintf(basic_out, "%s,%d,%ld,%.4f,%.4f\n",
                 loop->func,
                 loop->header_id,
                 loop->runs,
-                ((double)_prof_loops_sampled[i])/total_sampled*100);
+                100*pct,
+                elapsed*pct);
     }
 
-	fclose(out);
+    for (i = 0; i < _prof_num_loops; i++) {
+        for (j = 0; j < _prof_num_loops; j++) {
+            if (i == j) fprintf(graph_out, "_");
+            else fprintf(graph_out, "%.4f", frac2num(&profiles[i][j]) * 100);
+            if (j != _prof_num_loops-1) fprintf(graph_out, "\t");
+        }
+        fprintf(graph_out, "\n");
+    }
+
+    fclose(basic_out);
+    fclose(graph_out);
 }

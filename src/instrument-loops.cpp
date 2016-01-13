@@ -69,7 +69,7 @@ struct LoopInstrumentation : public ModulePass {
   Module *CurModule;
 
   ArrayType *ProfileArrTy;
-  ArrayType *Int64ArrTy;
+  ArrayType *RunningArrTy;
 
   LoopInstrumentation() : ModulePass(ID) {
     initializeLoopInstrumentationPass(*PassRegistry::getPassRegistry());
@@ -79,16 +79,14 @@ struct LoopInstrumentation : public ModulePass {
 
   StructType *LoopProfileTy;
 
-  // insert code to profile a loop
-  // return `struct loop_data` declared for the loop
+  // return a constant `struct loop_profile` initializer for a loop
   Constant *getLoopProfileInitializer(Constant *Fn, Loop *L, unsigned Id);
 
   // declare and initialize data for profiler
-  void declareArrs(std::vector<Constant *> &);
+  void declareGlobals(std::vector<Constant *> &);
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<LoopInfoWrapperPass>();
-    //AU.addRequiredID(LoopSimplifyID); 
   }
 
   // instrument a loop to record loop entrance/exit
@@ -106,10 +104,10 @@ void LoopInstrumentation::instrumentLoop(unsigned Idx, Loop *L)
 
   GlobalVariable *Profiles = CurModule->getGlobalVariable("_prof_loops");
   GlobalVariable *RunningArr = CurModule->getGlobalVariable("_prof_loops_running");
+  GlobalVariable *LoopEntryAddr = CurModule->getGlobalVariable("_prof_entry");
 
-  IRBuilder<> Builder = createFrontBuilder(Preheader);
-  Constant *Zero = ConstantInt::get(Int64Ty, 0),
-           *One = ConstantInt::get(Int64Ty, 1),
+  IRBuilder<> Builder(Preheader, Preheader->getTerminator());
+  Constant *Zero = ConstantInt::get(Int32Ty, 0),
            *RunsIdx = ConstantInt::get(Int32Ty, 2);
 
   // get Profile from global array
@@ -119,14 +117,19 @@ void LoopInstrumentation::instrumentLoop(unsigned Idx, Loop *L)
       Profiles,
       ProfileIndexes); 
 
-  // set `running` to 1
+  // emit code for `++_prof_entry`
+  Value *LoopEntry = Builder.CreateBinOp(Instruction::Add,
+    Builder.CreateLoad(LoopEntryAddr), ConstantInt::get(Int32Ty, 1));
+  Builder.CreateStore(LoopEntry, LoopEntryAddr); 
+
+  // set `running` to `++_prof_entry`
   std::vector<Value *> RunningIndexes { Zero, ConstantInt::get(Int32Ty, Idx) }; 
   Value *RunningAddr = Builder.CreateInBoundsGEP(
-      Int64ArrTy,
+      RunningArrTy,
       RunningArr, 
       RunningIndexes); 
-  Builder.CreateStore(One, RunningAddr);
-
+  Builder.CreateStore(LoopEntry, RunningAddr);
+  
   // increment `runs`
   std::vector<Value *> RunsIndexes { Zero, RunsIdx };
   Value *RunsAddr = Builder.CreateInBoundsGEP(
@@ -138,23 +141,26 @@ void LoopInstrumentation::instrumentLoop(unsigned Idx, Loop *L)
       ConstantInt::get(Int64Ty, 1));
   Builder.CreateStore(NewRuns, RunsAddr);
   
+  assert(L->hasDedicatedExits() && "loop is not simplified");
   SmallVector<BasicBlock *, 4> Exits;
   L->getExitBlocks(Exits);
   // set `running` to 0 in exit blocks
+  // and decrement `_prof_entry`
   for (BasicBlock *BB : Exits) { 
     IRBuilder<> Builder = createFrontBuilder(BB);
-    Value *RunningAddr = Builder.CreateInBoundsGEP(
-        Int64ArrTy,
-        RunningArr, 
-        RunningIndexes); 
+    Value *DecLoopEntry = Builder.CreateBinOp(Instruction::Sub,
+        Builder.CreateLoad(LoopEntryAddr), ConstantInt::get(Int32Ty, 1));
+    Builder.CreateStore(DecLoopEntry, LoopEntryAddr);
     Builder.CreateStore(Zero, RunningAddr);
   }
 }
 
-void LoopInstrumentation::declareArrs(std::vector<Constant *> &LoopProfiles)
+void LoopInstrumentation::declareGlobals(std::vector<Constant *> &LoopProfiles)
 { 
   LLVMContext &Ctx = CurModule->getContext();
   unsigned NumLoops = LoopProfiles.size();
+
+  Type *Int32Ty = Type::getInt32Ty(Ctx);
 
   ProfileArrTy = ArrayType::get(LoopProfileTy, NumLoops);
   Constant *ArrContent = ConstantArray::get(ProfileArrTy, LoopProfiles);
@@ -167,25 +173,17 @@ void LoopInstrumentation::declareArrs(std::vector<Constant *> &LoopProfiles)
       0);
 
   // declare `_prof_loops_sampled`
-  Int64ArrTy = ArrayType::get(
-      Type::getInt64Ty(Ctx), NumLoops);
-  new GlobalVariable(*CurModule,
-      Int64ArrTy,
-      false, GlobalValue::ExternalLinkage,
-      ConstantAggregateZero::get(Int64ArrTy), "_prof_loops_sampled", nullptr,
-      GlobalVariable::NotThreadLocal,
-      0);
-
+  RunningArrTy = ArrayType::get(
+      Int32Ty, NumLoops);
   // declare `_prof_loops_running` 
   new GlobalVariable(*CurModule,
-      Int64ArrTy,
+      RunningArrTy,
       false, GlobalValue::ExternalLinkage,
-      ConstantAggregateZero::get(Int64ArrTy), "_prof_loops_running", nullptr,
+      ConstantAggregateZero::get(RunningArrTy), "_prof_loops_running", nullptr,
       GlobalVariable::NotThreadLocal,
       0);
 
   // also define `_prof_num_loop`
-  Type *Int32Ty = Type::getInt32Ty(Ctx);
   Constant *NumLoop = ConstantInt::get(Int32Ty, NumLoops, true);
   new GlobalVariable(*CurModule,
       Int32Ty,
@@ -193,6 +191,14 @@ void LoopInstrumentation::declareArrs(std::vector<Constant *> &LoopProfiles)
       NumLoop, "_prof_num_loops", nullptr,
       GlobalVariable::NotThreadLocal,
       0); 
+
+  // declare `_prof_entry`
+  new GlobalVariable(*CurModule, 
+      Int32Ty,
+      false, GlobalValue::ExternalLinkage,
+      ConstantInt::get(Int32Ty, 0), "_prof_entry", nullptr,
+      GlobalVariable::NotThreadLocal,
+      0);
 }
 
 char LoopInstrumentation::ID = 1;
@@ -272,11 +278,11 @@ bool LoopInstrumentation::runOnModule(Module &M)
     }
   }
 
-  declareArrs(LoopProfiles); 
+  declareGlobals(LoopProfiles); 
 
   unsigned Idx = 0;
   for (Function &F : M.getFunctionList()) {
-    // external function
+    // function without implementation
     if (F.empty()) continue;
 
     LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(F)
@@ -293,11 +299,6 @@ bool LoopInstrumentation::runOnModule(Module &M)
     }
   }
 
-  /*
-  for (unsigned i = 0, e = LoopsToInstrument.size(); i != e; i++)
-    instrumentLoop(i, LoopsToInstrument[i]);
-    */
-  
   return true;
 } 
 
