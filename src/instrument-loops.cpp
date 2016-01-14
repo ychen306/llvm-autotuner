@@ -122,15 +122,17 @@ void LoopInstrumentation::instrumentLoop(unsigned Idx, Loop *L)
     Builder.CreateLoad(LoopEntryAddr), ConstantInt::get(Int32Ty, 1));
   Builder.CreateStore(LoopEntry, LoopEntryAddr); 
 
-  // set `running` to `++_prof_entry`
+  // emit `_prof_loops_running[idx] += ++_prof_entry`
   std::vector<Value *> RunningIndexes { Zero, ConstantInt::get(Int32Ty, Idx) }; 
   Value *RunningAddr = Builder.CreateInBoundsGEP(
       RunningArrTy,
       RunningArr, 
       RunningIndexes); 
-  Builder.CreateStore(LoopEntry, RunningAddr);
+  Builder.CreateStore(
+      Builder.CreateBinOp(Instruction::Add, LoopEntry, Builder.CreateLoad(RunningAddr)),
+      RunningAddr);
   
-  // increment `runs`
+  // emit `_prof_loops[idx].runs++`
   std::vector<Value *> RunsIndexes { Zero, RunsIdx };
   Value *RunsAddr = Builder.CreateInBoundsGEP(
       LoopProfileTy,
@@ -144,14 +146,20 @@ void LoopInstrumentation::instrumentLoop(unsigned Idx, Loop *L)
   assert(L->hasDedicatedExits() && "loop is not simplified");
   SmallVector<BasicBlock *, 4> Exits;
   L->getExitBlocks(Exits);
-  // set `running` to 0 in exit blocks
-  // and decrement `_prof_entry`
   for (BasicBlock *BB : Exits) { 
     IRBuilder<> Builder = createFrontBuilder(BB);
+    Value *LoopEntry = Builder.CreateLoad(LoopEntryAddr);
+
+    // emit `_prof_loops_running[idx] -= _prof_entry`
+    Builder.CreateStore(
+        Builder.CreateBinOp(Instruction::Sub,
+          Builder.CreateLoad(RunningAddr), LoopEntry),
+        RunningAddr);
+
+    // emit `_prof_entry -= 1`
     Value *DecLoopEntry = Builder.CreateBinOp(Instruction::Sub,
-        Builder.CreateLoad(LoopEntryAddr), ConstantInt::get(Int32Ty, 1));
+        LoopEntry, ConstantInt::get(Int32Ty, 1));
     Builder.CreateStore(DecLoopEntry, LoopEntryAddr);
-    Builder.CreateStore(Zero, RunningAddr);
   }
 }
 
