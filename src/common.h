@@ -1,3 +1,6 @@
+#ifndef _COMMON_H_ 
+#define _COMMON_H_
+
 // mach dosen't have `clock_gettime`
 #ifdef __MACH__ 
 #include <mach/clock.h>
@@ -16,3 +19,4 @@ int clock_gettime(clock_id_t clk_id, struct timespec *ts)
 }
 #endif
 
+#endif
