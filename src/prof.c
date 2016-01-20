@@ -137,6 +137,7 @@ static void collect_sample(int signo)
  
 void _prof_init() 
 { 
+	srand(time(NULL));
 	setup_timer();
     create_profiles();
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
