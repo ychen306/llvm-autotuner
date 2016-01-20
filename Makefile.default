@@ -24,7 +24,7 @@ build_obj:
 	mkdir -p $(OBJ_DIR)
 	$(MAKE) $(OBJS)
 
-obj/%.bc: $(SRC_DIR)/%.c
+obj/%.bc: $(SRC_DIR)/%.c $(SRC_DIR)/common.h
 	$(CC) -O3 -c -emit-llvm $^ -o $@
 
 %.o: $(SRC_DIR)/%.cpp

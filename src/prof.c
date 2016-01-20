@@ -5,8 +5,11 @@
 #include <stdio.h>
 #include <signal.h>
 #include <string.h>
+#include <math.h>
 
-#define PROF_SIMPLE_OUT "loop-prof.basic.csv" 
+#include "common.h"
+
+#define PROF_FLAT_OUT "loop-prof.flat.csv" 
 #define PROF_GRAPH_OUT "loop-prof.graph.csv"
 
 // sample every 1ms
@@ -71,6 +74,38 @@ static void create_profiles()
         profiles[i] = calloc(sizeof (struct fraction), _prof_num_loops);
 }
 
+// exponential distribution with lambda = 1
+// note that this means the expected value is also one (E[X] = 1/lambda)
+// see
+// https://en.wikipedia.org/wiki/Exponential_distribution#Generating_exponential_variates
+static inline float rand_exp()
+{ 
+	float r = (float)rand() / (float)RAND_MAX,
+		  x = -logf(r);
+	return x;
+}
+
+static void collect_sample(int signo);
+
+// setup a timer that fires in T microseconds
+// T is a exponential random variable with expectation of `SAMPLING_INTERVAL` microseconds
+static void setup_timer()
+{
+    struct itimerval timerspec;
+
+    timerspec.it_interval.tv_sec = 0;
+    timerspec.it_interval.tv_usec = 0;
+    timerspec.it_value.tv_sec = 0;
+    timerspec.it_value.tv_usec = SAMPLING_INTERVAL * rand_exp(); 
+
+    if (signal(SIGPROF, collect_sample) == SIG_ERR) {
+        perror("Unable to catch SIGPROF");
+        exit(1);
+    }
+
+    setitimer(ITIMER_PROF, &timerspec, NULL);
+}
+
 static void collect_sample(int signo)
 { 
     // update profiles of all the loops given a new sample
@@ -97,24 +132,12 @@ static void collect_sample(int signo)
             }
         }
     }
+	setup_timer();
 }
  
 void _prof_init() 
 { 
-    struct itimerval timerspec;
-
-    timerspec.it_interval.tv_sec = 0;
-    timerspec.it_interval.tv_usec = SAMPLING_INTERVAL;
-    timerspec.it_value.tv_sec = 0;
-    timerspec.it_value.tv_usec = SAMPLING_INTERVAL;
-
-    if (signal(SIGPROF, collect_sample) == SIG_ERR) {
-        perror("Unable to catch SIGPROF");
-        exit(1);
-    }
-
-    setitimer(ITIMER_PROF, &timerspec, NULL);
-
+	setup_timer();
     create_profiles();
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
 }
@@ -133,15 +156,15 @@ void _prof_dump()
     long long int elapsed = (end.tv_sec - begin.tv_sec)*1e3 +
         (end.tv_nsec - begin.tv_nsec) / 1e6;
 
-    FILE *basic_out = fopen(PROF_SIMPLE_OUT, "wb"),
+    FILE *flat_out = fopen(PROF_FLAT_OUT, "wb"),
          *graph_out = fopen(PROF_GRAPH_OUT, "wb");
 
-    fprintf(basic_out, "function,header-id,runs,time(pct),time(ms)");
+    fprintf(flat_out, "function,header-id,runs,time(pct),time(ms)\n");
     size_t i, j;
     for (i = 0; i < _prof_num_loops; i++) { 
         struct loop_data *loop = &_prof_loops[i];
         float pct = frac2num(&profiles[i][i]); 
-        fprintf(basic_out, "%s,%d,%ld,%.4f,%.4f\n",
+        fprintf(flat_out, "%s,%d,%lld,%.4f,%.4f\n",
                 loop->func,
                 loop->header_id,
                 loop->runs,
@@ -153,11 +176,12 @@ void _prof_dump()
         for (j = 0; j < _prof_num_loops; j++) {
             if (i == j) fprintf(graph_out, "_");
             else fprintf(graph_out, "%.4f", frac2num(&profiles[i][j]) * 100);
+
             if (j != _prof_num_loops-1) fprintf(graph_out, "\t");
         }
         fprintf(graph_out, "\n");
     }
 
-    fclose(basic_out);
+    fclose(flat_out);
     fclose(graph_out);
 }
