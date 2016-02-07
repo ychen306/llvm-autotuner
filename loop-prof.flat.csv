@@ -1,8 +1,0 @@
-function,header-id,runs,time(pct),time(ms)
-main,80,1,0.0000,0.0000
-_Z6renderIfEjRKNSt3__16vectorIP6SphereIT_ENS0_9allocatorIS5_EEEE,6,1,98.6072,973.2535
-_Z6renderIfEjRKNSt3__16vectorIP6SphereIT_ENS0_9allocatorIS5_EEEE,15,1,0.2786,2.7493
-_ZNSt3__113__vector_baseIP6SphereIfENS_9allocatorIS3_EEED2Ev,3,1,0.0000,0.0000
-_ZNSt3__114__split_bufferIP6SphereIfERNS_9allocatorIS3_EEED2Ev,2,4,0.0000,0.0000
-_Z5traceIfE4Vec3IT_ERKS2_S4_RKNSt3__16vectorIP6SphereIS1_ENS5_9allocatorIS9_EEEERKi,2,1578318,31.1978,307.9220
-_Z5traceIfE4Vec3IT_ERKS2_S4_RKNSt3__16vectorIP6SphereIS1_ENS5_9allocatorIS9_EEEERKi,25,460386,18.3844,181.4540

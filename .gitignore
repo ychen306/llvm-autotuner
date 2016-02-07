@@ -1,8 +1,9 @@
 Makefile
 bin/
-loop-prof.basic.csv
+loop-prof.flat.csv
 loop-prof.graph.csv
 extracted.list
+x
 
 # llvm object files
 *.ll
