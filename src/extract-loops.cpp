@@ -34,6 +34,7 @@
 
 using namespace llvm;
 
+
 // because basic blocks can be implicitly labelled,
 // we will reference them (across program executations) by the
 // order of defualt traversal. i.e. the first block encounter
@@ -72,28 +73,28 @@ struct LoopHeaderParser : public cl::parser<LoopHeader> {
 
 static cl::opt<std::string>
 ExtractedListFile(
-    "e", 
-    cl::desc("file where name of extracted functions will be listed"),
-    cl::init("extracted.list"));
+  "e", 
+  cl::desc("file where name of extracted functions will be listed"),
+  cl::init("extracted.list"));
 
 static cl::opt<std::string>
 InputFilename(
-    cl::Positional,
-    cl::desc("<input file>"),
-    cl::Required);
+  cl::Positional,
+  cl::desc("<input file>"),
+  cl::Required);
 
 static cl::opt<std::string>
 OuputPrefix(
-    "p",
-    cl::desc("Specify output prefix"),
-    cl::value_desc("output prefix"),
-    cl::Required);
+  "p",
+  cl::desc("Specify output prefix"),
+  cl::value_desc("output prefix"),
+  cl::Required);
 
 static cl::list<LoopHeader, bool, LoopHeaderParser>
 LoopsToExtract(
-    "l",
-    cl::desc("Specify loop(s) to extract.\nDescribe a loop in this format:\n\"[function],[loop header]\""),
-    cl::OneOrMore, cl::Prefix);
+  "l",
+  cl::desc("Specify loop(s) to extract.\nDescribe a loop in this format:\n\"[function],[loop header]\""),
+  cl::OneOrMore, cl::Prefix);
 
 
 struct LoopExtractor : public ModulePass {
@@ -120,12 +121,12 @@ char LoopExtractor::ID = 42;
 
 
 // define `initializeLoopExtractorPass()`
-INITIALIZE_PASS_BEGIN(LoopExtractor, "", "", true, true)
-INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
+  INITIALIZE_PASS_BEGIN(LoopExtractor, "", "", true, true)
+  INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
-INITIALIZE_PASS_END(LoopExtractor, "", "", true, true)
+  INITIALIZE_PASS_END(LoopExtractor, "", "", true, true)
 
-static std::vector<GlobalValue *> ExtractedLoops;
+  static std::vector<GlobalValue *> ExtractedLoops;
 
 bool LoopExtractor::runOnModule(Module &M)
 { 
@@ -184,10 +185,37 @@ bool LoopExtractor::runOnModule(Module &M)
   return Changed;
 }
 
+static int ModuleId = 0;
 std::string newFileName()
 {
-  static int id = 0;
-  return OuputPrefix + "." + std::to_string(id++) + ".bc";
+  return OuputPrefix + "." + std::to_string(ModuleId++) + ".bc";
+}
+
+// change the linkage of functions called by `Caller` to internal linkage
+// and return a vector containing internalized functions
+std::vector<GlobalValue *> getCalledFuncs(Module *M, Function *Caller)
+{
+  CallGraph CG(*M);
+  std::set<GlobalValue *> Called;
+  std::vector<Function *> Worklist {Caller};
+
+  while (!Worklist.empty()) {
+    Function *F = Worklist.back();
+    Worklist.pop_back(); 
+    for (auto &CR : *CG[F]) { 
+      Function *Callee = CR.second->getFunction();
+      if (Callee == nullptr || Callee == Caller || Callee->empty()) {
+        continue;
+      } 
+
+      bool New = Called.insert(Callee).second; 
+      if (New) { 
+        Worklist.push_back(Callee);
+      }
+    }
+  }
+
+  return std::vector<GlobalValue *>(Called.begin(), Called.end());
 }
 
 int main(int argc, char **argv)
@@ -219,16 +247,10 @@ int main(int argc, char **argv)
   Extraction.add(new LoopExtractor());
   Extraction.run(*M.get()); 
 
-  // we only want to do inline within the body of extracted
-  // code but not the whole module, so we clone the module
-  // and do inline there, which will be "split" into several modules
-  // to host the extracted code separately
-  Module *InlinedModule = CloneModule(M.get());
-  legacy::PassManager Inlining;
-  Inlining.add(createFunctionInliningPass());
-  Inlining.run(*InlinedModule);
+  Module *CopiedModule = CloneModule(M.get());
 
   legacy::PassManager PM;
+  // removed extracted loops from the main module
   PM.add(createGVExtractionPass(ExtractedLoops, true));
   PM.add(createBitcodeWriterPass(Out.os(), true));
   PM.run(*M.get()); 
@@ -236,12 +258,17 @@ int main(int argc, char **argv)
   std::ofstream ExtractedList;
   ExtractedList.open(ExtractedListFile);
 
+  // TODO
+  // maybe we have to delete cloned module?
+
   // now remove everything in a new module except
-  // the extracted loop
+  // the extracted loop its callees (which will also be internalized)
   for (GlobalValue *Extracted : ExtractedLoops) {
-    Module *NewModule = CloneModule(InlinedModule); 
+    Module *NewModule = CloneModule(CopiedModule); 
     std::string ExtractedName = Extracted->getName();
-    std::vector<GlobalValue *> ToPreserve { NewModule->getFunction(ExtractedName) };
+    Function *ExtractedF = NewModule->getFunction(ExtractedName);
+    std::vector<GlobalValue *> ToPreserve = getCalledFuncs(NewModule, ExtractedF);
+    ToPreserve.push_back(ExtractedF);
 
     std::string BitcodeFName = newFileName();
 
@@ -260,6 +287,7 @@ int main(int argc, char **argv)
 
     legacy::PassManager PM; 
     PM.add(createGVExtractionPass(ToPreserve, false));
+    PM.add(createInternalizePass(std::vector<const char *>{ExtractedName.c_str()}));
     PM.add(createBitcodeWriterPass(ExtractedOut.os(), true)); 
     PM.run(*NewModule);
 

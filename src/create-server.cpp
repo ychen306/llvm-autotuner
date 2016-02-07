@@ -25,6 +25,9 @@
 #include <map>
 #include <string>
 
+// TODO
+// deal with internal and private linkage by creating and inserting calls to setters of global variable
+
 using namespace llvm;
 
 cl::opt<std::string>

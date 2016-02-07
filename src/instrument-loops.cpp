@@ -288,6 +288,9 @@ bool LoopInstrumentation::runOnModule(Module &M)
 
   declareGlobals(LoopProfiles); 
 
+  // TODO
+  // avoid iterating through the module twice
+
   unsigned Idx = 0;
   for (Function &F : M.getFunctionList()) {
     // function without implementation
