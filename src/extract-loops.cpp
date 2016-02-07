@@ -185,14 +185,13 @@ bool LoopExtractor::runOnModule(Module &M)
   return Changed;
 }
 
-static int ModuleId = 0;
 std::string newFileName()
 {
+  static int ModuleId = 0;
   return OuputPrefix + "." + std::to_string(ModuleId++) + ".bc";
 }
 
-// change the linkage of functions called by `Caller` to internal linkage
-// and return a vector containing internalized functions
+// return functions called (including those called indirectly) by `Caller)
 std::vector<GlobalValue *> getCalledFuncs(Module *M, Function *Caller)
 {
   CallGraph CG(*M);
