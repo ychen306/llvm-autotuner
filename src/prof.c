@@ -20,7 +20,7 @@ void _prof_dump() __attribute__ ((destructor));
 
 struct loop_data { 
 	char *func;
-	int32_t header_id;
+	int32_t header_id; // > 0 if it's loop, = 0 if it's a function
 	int64_t runs;
 };
 

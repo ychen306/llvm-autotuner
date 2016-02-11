@@ -79,8 +79,8 @@ struct LoopInstrumentation : public ModulePass {
 
   StructType *LoopProfileTy;
 
-  // return a constant `struct loop_profile` initializer for a loop
-  Constant *getLoopProfileInitializer(Constant *Fn, Loop *L, unsigned Id);
+  // return a constant `struct loop_profile` initializer for a loop or (a function)
+  Constant *getLoopProfileInitializer(Constant *Fn, unsigned Id);
 
   // declare and initialize data for profiler
   void initGlobals(std::vector<Constant *> &);
@@ -89,24 +89,50 @@ struct LoopInstrumentation : public ModulePass {
     AU.addRequired<LoopInfoWrapperPass>();
   }
 
+
+  // insert code in the beginning of an entry block and return address it's matching address
+  // in `_prof_loops_running`
+  Value *instrumentEntry(BasicBlock *Entry, unsigned Idx);
+  void instrumentExit(BasicBlock *Exit, Value *RunningAddr);
   // instrument a loop to record loop entrance/exit
   void instrumentLoop(unsigned Idx, Loop *L);
 
   const char *getPassName() const override { return "LoopInstrumentation pass"; }
 };
 
-void LoopInstrumentation::instrumentLoop(unsigned Idx, Loop *L)
+void LoopInstrumentation::instrumentExit(BasicBlock *Exit, Value *RunningAddr)
+{
+  LLVMContext &Ctx = CurModule->getContext();
+  Type *Int32Ty = Type::getInt32Ty(Ctx);
+  GlobalVariable *LoopEntryAddr = CurModule->getGlobalVariable("_prof_entry");
+
+  // insert in the beginning of the exit block
+  IRBuilder<> Builder = createFrontBuilder(Exit);
+  Value *LoopEntry = Builder.CreateLoad(LoopEntryAddr);
+
+  // emit `_prof_loops_running[idx] -= _prof_entry`
+  Builder.CreateStore(
+    Builder.CreateBinOp(Instruction::Sub, Builder.CreateLoad(RunningAddr), LoopEntry),
+    RunningAddr);
+
+  // emit `_prof_entry -= 1`
+  Value *DecLoopEntry = Builder.CreateBinOp(Instruction::Sub, LoopEntry,
+                                            ConstantInt::get(Int32Ty, 1));
+  Builder.CreateStore(DecLoopEntry, LoopEntryAddr);
+}
+
+Value *LoopInstrumentation::instrumentEntry(BasicBlock *Entry, unsigned Idx)
 {
   LLVMContext &Ctx = CurModule->getContext();
   Type *Int32Ty = Type::getInt32Ty(Ctx),
        *Int64Ty = Type::getInt64Ty(Ctx);
-  BasicBlock *Preheader = L->getLoopPreheader();
 
   GlobalVariable *Profiles = CurModule->getGlobalVariable("_prof_loops.stub"),
                  *RunningArr = CurModule->getGlobalVariable("_prof_loops_running.stub"),
                  *LoopEntryAddr = CurModule->getGlobalVariable("_prof_entry");
 
-  IRBuilder<> Builder(Preheader, Preheader->getTerminator());
+  // insert instructions at the end of entry block
+  IRBuilder<> Builder(Entry, Entry->getTerminator());
   Constant *Zero = ConstantInt::get(Int32Ty, 0),
            *RunsIdx = ConstantInt::get(Int32Ty, 2);
 
@@ -142,24 +168,23 @@ void LoopInstrumentation::instrumentLoop(unsigned Idx, Loop *L)
   Value *NewRuns = Builder.CreateBinOp(Instruction::Add, OldRuns,
       ConstantInt::get(Int64Ty, 1));
   Builder.CreateStore(NewRuns, RunsAddr);
-  
+
+  return RunningAddr;
+}
+
+void LoopInstrumentation::instrumentLoop(unsigned Idx, Loop *L)
+{
+  BasicBlock *Preheader = L->getLoopPreheader(); 
+  assert(Preheader && "loop not simplified");
+
+  Value *RunningAddr = instrumentEntry(Preheader, Idx);
+
   assert(L->hasDedicatedExits() && "loop is not simplified");
   SmallVector<BasicBlock *, 4> Exits;
   L->getExitBlocks(Exits);
+
   for (BasicBlock *BB : Exits) { 
-    IRBuilder<> Builder = createFrontBuilder(BB);
-    Value *LoopEntry = Builder.CreateLoad(LoopEntryAddr);
-
-    // emit `_prof_loops_running[idx] -= _prof_entry`
-    Builder.CreateStore(
-        Builder.CreateBinOp(Instruction::Sub,
-          Builder.CreateLoad(RunningAddr), LoopEntry),
-        RunningAddr);
-
-    // emit `_prof_entry -= 1`
-    Value *DecLoopEntry = Builder.CreateBinOp(Instruction::Sub,
-        LoopEntry, ConstantInt::get(Int32Ty, 1));
-    Builder.CreateStore(DecLoopEntry, LoopEntryAddr);
+    instrumentExit(BB, RunningAddr);
   }
 }
 
@@ -229,7 +254,7 @@ INITIALIZE_PASS_BEGIN(LoopInstrumentation, "", "", true, true)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_END(LoopInstrumentation, "", "", true, true) 
 
-Constant *LoopInstrumentation::getLoopProfileInitializer(Constant *Fn, Loop *L, unsigned Id)
+Constant *LoopInstrumentation::getLoopProfileInitializer(Constant *Fn, unsigned Id)
 { 
   LLVMContext &Ctx = CurModule->getContext();
   Type *Int32Ty = Type::getInt32Ty(Ctx),
@@ -299,6 +324,9 @@ bool LoopInstrumentation::runOnModule(Module &M)
 
   std::vector<Constant *> LoopProfiles;
   std::vector<Loop *> LoopsToInstrument;
+  // index to profile entry
+  unsigned Idx = 0;
+
   for (Function &F : M.getFunctionList()) {
     // external function
     if (F.empty()) continue;
@@ -316,17 +344,30 @@ bool LoopInstrumentation::runOnModule(Module &M)
     std::vector<Constant *> Args = {Zero, Zero};
     Constant *FnName = ConstantExpr::getInBoundsGetElementPtr(Str->getType(), GV, Args); 
 
+    BasicBlock *FnEntry = &F.getEntryBlock();
+    Value *FnRunningAddr = instrumentEntry(FnEntry, Idx++);
+    // a loop's header id has to start from 1, so use 0 for function
+    LoopProfiles.push_back(getLoopProfileInitializer(FnName, 0));
+
     unsigned i = 0;
     for (BasicBlock &BB : F) {
       ++i;
       Loop *L = LI.getLoopFor(&BB);
+
+      // returning block
+      if (isa<ReturnInst>(BB.getTerminator())) {
+        instrumentExit(&BB, FnRunningAddr);
+        // can't be a returning block and loop-header at the same time
+        continue; 
+      }
+
       if (!L || L->getParentLoop() ||
           !L->isLoopSimplifyForm() || L->getHeader() != &BB) continue;
 
-      LoopProfiles.push_back(getLoopProfileInitializer(FnName, L, i));
+      LoopProfiles.push_back(getLoopProfileInitializer(FnName, i));
       LoopsToInstrument.push_back(L);
 
-      instrumentLoop(LoopProfiles.size()-1, L);
+      instrumentLoop(Idx++, L);
     }
   }
 
