@@ -24,6 +24,7 @@
 #include <llvm/Support/raw_ostream.h>
 
 #include <fstream> 
+#include <sstream>
 #include <utility>
 #include <set>
 #include <memory>
@@ -31,9 +32,10 @@
 #include <vector>
 #include <map>
 #include <cstdlib>
+#include <cstdio>
+#include <cmath>
 
 using namespace llvm;
-
 
 // because basic blocks can be implicitly labelled,
 // we will reference them (across program executations) by the
@@ -42,6 +44,10 @@ using namespace llvm;
 struct LoopHeader {
   std::string Function;
   unsigned HeaderId;
+
+  bool operator==(LoopHeader &other) { 
+    return Function == other.Function && HeaderId == other.HeaderId;
+  }
 };
 
 // TODO terminate program gracefully...
@@ -121,24 +127,66 @@ char LoopExtractor::ID = 42;
 
 
 // define `initializeLoopExtractorPass()`
-  INITIALIZE_PASS_BEGIN(LoopExtractor, "", "", true, true)
-  INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
+INITIALIZE_PASS_BEGIN(LoopExtractor, "", "", true, true)
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
-  INITIALIZE_PASS_END(LoopExtractor, "", "", true, true)
+INITIALIZE_PASS_END(LoopExtractor, "", "", true, true)
 
-  static std::vector<GlobalValue *> ExtractedLoops;
+
+static std::vector<GlobalValue *> ExtractedLoops;
+// mapping <extracted loop> -> <names of functions that needs to be copied and extracted together with the map>
+static std::map<std::string, std::vector<std::string>> Called;
+
+
+// read meta data of the call graph node
+std::vector<LoopHeader> readGraphNodeMeta()
+{
+  std::ifstream Fin("loop-prof.flat.csv");
+  std::string Line;
+  std::vector<LoopHeader> Nodes;
+
+  // skip header
+  std::getline(Fin, Line);
+  while (std::getline(Fin, Line)) {
+    LoopHeader Node;
+    std::istringstream Fields(Line);
+    std::getline(Fields, Node.Function, ',');
+    Fields >> Node.HeaderId;
+
+    Nodes.emplace_back(Node);
+  }
+
+  return Nodes;
+}
+
+// build an adjacency matrix for the dynamic call graph
+// NOTE: this doesn't do any error handling
+std::vector<std::vector<float>> loadDynCallGraph(unsigned NumNodes)
+{
+  std::ifstream Fin("loop-prof.graph.csv");
+  std::vector<std::vector<float>> G(NumNodes);
+  for (unsigned i = 0; i < NumNodes; i++) { 
+    G[i].resize(NumNodes);
+    for (unsigned j = 0; j < NumNodes; j++) {
+      Fin >> G[i][j];
+    }
+  }
+  return G;
+}
 
 bool LoopExtractor::runOnModule(Module &M)
 { 
   bool Changed = false; 
-  CallGraph CG(M);
+ 
+  std::vector<LoopHeader> CGNodes = readGraphNodeMeta();
+  std::vector<std::vector<float>> DynCG = loadDynCallGraph(CGNodes.size());
 
   // mapping function -> ids of basic blocks
   std::map<std::string, std::set<unsigned> > Loops;
   for (LoopHeader &LH : LoopsToExtract)
     Loops[LH.Function].insert(LH.HeaderId);
 
-  std::vector<Loop *> ToExtract;
+  std::vector<std::pair<Loop *, LoopHeader>> ToExtract;
 
   for (auto I : Loops) {
     Function *F = M.getFunction(I.first); 
@@ -164,12 +212,14 @@ bool LoopExtractor::runOnModule(Module &M)
         error("basic block " + std::to_string(i) + " is not a loop header of top level loop");
 
       // "remember" this loop and extract it later
-      ToExtract.push_back(L);
+      ToExtract.emplace_back(std::pair<Loop *, LoopHeader>(L, {F->getName(), i}));
       Changed = true;
     }
 
     // actually extract loops
-    for (Loop *L : ToExtract) {
+    for (auto &Pair: ToExtract) { 
+      Loop *L = Pair.first; 
+      LoopHeader &Header = Pair.second;
       CodeExtractor CE(DT, *L, true); 
       Function *Extracted = CE.extractCodeRegion(); 
       if (!Extracted) continue;
@@ -177,6 +227,24 @@ bool LoopExtractor::runOnModule(Module &M)
       Extracted->setVisibility(GlobalValue::DefaultVisibility);
       Extracted->setLinkage(GlobalValue::ExternalLinkage);
       ExtractedLoops.push_back(Extracted);
+
+      unsigned CallerIdx;
+      for (unsigned i = 0, e = CGNodes.size(); i != e; i++) {
+        if (CGNodes[i] == Header) {
+          CallerIdx = i;
+          break;
+        }
+      }
+      // find out what functions are called by the loops 
+      for (unsigned CalleeIdx = 0, E = DynCG.size(); CalleeIdx < E; CalleeIdx++) { 
+        if (CalleeIdx == CallerIdx) continue; 
+        float TimeSpent = DynCG[CallerIdx][CalleeIdx];
+        if (!std::isnan(TimeSpent) && TimeSpent > 0) {
+          auto &Node = CGNodes[CalleeIdx];
+          if (Node.HeaderId == 0)
+            Called[Extracted->getName()].push_back(Node.Function);
+        }
+      }
     }
     ToExtract.resize(0);
 
@@ -193,29 +261,20 @@ std::string newFileName()
 
 // return functions called (including those called indirectly) by `Caller`)
 std::vector<GlobalValue *> getCalledFuncs(Module *M, Function *Caller)
-{
-  CallGraph CG(*M);
-  std::set<GlobalValue *> Called;
-  std::vector<Function *> Worklist {Caller};
-
-  while (!Worklist.empty()) {
-    Function *F = Worklist.back();
-    Worklist.pop_back(); 
-    for (auto &CR : *CG[F]) { 
-      Function *Callee = CR.second->getFunction();
-      if (Callee == nullptr || Callee == Caller || Callee->empty()) {
-        continue;
-      } 
-
-      bool New = Called.insert(Callee).second; 
-      if (New) { 
-        Worklist.push_back(Callee);
-      }
-    }
+{ 
+  std::vector<GlobalValue *> Funcs;
+  for (auto &CalleeName : Called[Caller->getName()]) {
+    Funcs.push_back(M->getFunction(CalleeName));
   }
 
-  return std::vector<GlobalValue *>(Called.begin(), Called.end());
+  return Funcs;
 }
+
+
+struct GraphNodeMeta {
+  std::string Func;
+  bool IsFunc; // could be a loop
+};
 
 int main(int argc, char **argv)
 {
@@ -261,7 +320,7 @@ int main(int argc, char **argv)
   // maybe we have to delete cloned module?
 
   // now remove everything in a new module except
-  // the extracted loop its callees (which will also be internalized)
+  // the extracted loop and its callees (which will also be internalized)
   for (GlobalValue *Extracted : ExtractedLoops) {
     Module *NewModule = CloneModule(CopiedModule); 
     std::string ExtractedName = Extracted->getName();
@@ -272,7 +331,7 @@ int main(int argc, char **argv)
     std::string BitcodeFName = newFileName();
 
     // report name of extracted function
-    ExtractedList << ExtractedName << "\t" << BitcodeFName << '\n';
+    ExtractedList << ExtractedName << '\t' << BitcodeFName << '\n';
 
     tool_output_file ExtractedOut(BitcodeFName, EC, sys::fs::F_None);
 

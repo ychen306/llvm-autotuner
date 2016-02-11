@@ -323,7 +323,6 @@ bool LoopInstrumentation::runOnModule(Module &M)
       0);
 
   std::vector<Constant *> LoopProfiles;
-  std::vector<Loop *> LoopsToInstrument;
   // index to profile entry
   unsigned Idx = 0;
 
@@ -344,8 +343,7 @@ bool LoopInstrumentation::runOnModule(Module &M)
     std::vector<Constant *> Args = {Zero, Zero};
     Constant *FnName = ConstantExpr::getInBoundsGetElementPtr(Str->getType(), GV, Args); 
 
-    BasicBlock *FnEntry = &F.getEntryBlock();
-    Value *FnRunningAddr = instrumentEntry(FnEntry, Idx++);
+    Value *FnRunningAddr = instrumentEntry(&F.getEntryBlock(), Idx++);
     // a loop's header id has to start from 1, so use 0 for function
     LoopProfiles.push_back(getLoopProfileInitializer(FnName, 0));
 
@@ -354,10 +352,9 @@ bool LoopInstrumentation::runOnModule(Module &M)
       ++i;
       Loop *L = LI.getLoopFor(&BB);
 
-      // returning block
+      // found returning block of `F`
       if (isa<ReturnInst>(BB.getTerminator())) {
         instrumentExit(&BB, FnRunningAddr);
-        // can't be a returning block and loop-header at the same time
         continue; 
       }
 
@@ -365,12 +362,12 @@ bool LoopInstrumentation::runOnModule(Module &M)
           !L->isLoopSimplifyForm() || L->getHeader() != &BB) continue;
 
       LoopProfiles.push_back(getLoopProfileInitializer(FnName, i));
-      LoopsToInstrument.push_back(L);
 
       instrumentLoop(Idx++, L);
     }
   }
 
+  assert(Idx == LoopProfiles.size());
   initGlobals(LoopProfiles); 
 
   return true;
@@ -401,6 +398,7 @@ int main(int argc, char **argv)
 
 
   Passes.run(*M.get());
+
   
   Out.keep();
 }

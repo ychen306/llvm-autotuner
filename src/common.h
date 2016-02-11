@@ -6,6 +6,7 @@
 #include <mach/clock.h>
 #include <mach/mach.h>
 #define CLOCK_PROCESS_CPUTIME_ID REALTIME_CLOCK
+
 int clock_gettime(clock_id_t clk_id, struct timespec *ts)
 { 
 	clock_serv_t cclock;

@@ -174,7 +174,7 @@ void _prof_dump()
 
 	for (i = 0; i < _prof_num_loops; i++) {
 		for (j = 0; j < _prof_num_loops; j++) {
-			if (i == j) fprintf(graph_out, "_");
+			if (i == j) fprintf(graph_out, "-1");
 			else fprintf(graph_out, "%.4f", frac2num(&profiles[i][j]) * 100);
 
 			if (j != _prof_num_loops-1) fprintf(graph_out, "\t");
