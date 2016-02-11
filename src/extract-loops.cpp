@@ -191,7 +191,7 @@ std::string newFileName()
   return OuputPrefix + "." + std::to_string(ModuleId++) + ".bc";
 }
 
-// return functions called (including those called indirectly) by `Caller)
+// return functions called (including those called indirectly) by `Caller`)
 std::vector<GlobalValue *> getCalledFuncs(Module *M, Function *Caller)
 {
   CallGraph CG(*M);

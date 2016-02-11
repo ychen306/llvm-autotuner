@@ -83,7 +83,7 @@ struct LoopInstrumentation : public ModulePass {
   Constant *getLoopProfileInitializer(Constant *Fn, Loop *L, unsigned Id);
 
   // declare and initialize data for profiler
-  void declareGlobals(std::vector<Constant *> &);
+  void initGlobals(std::vector<Constant *> &);
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<LoopInfoWrapperPass>();
@@ -102,9 +102,9 @@ void LoopInstrumentation::instrumentLoop(unsigned Idx, Loop *L)
        *Int64Ty = Type::getInt64Ty(Ctx);
   BasicBlock *Preheader = L->getLoopPreheader();
 
-  GlobalVariable *Profiles = CurModule->getGlobalVariable("_prof_loops");
-  GlobalVariable *RunningArr = CurModule->getGlobalVariable("_prof_loops_running");
-  GlobalVariable *LoopEntryAddr = CurModule->getGlobalVariable("_prof_entry");
+  GlobalVariable *Profiles = CurModule->getGlobalVariable("_prof_loops.stub"),
+                 *RunningArr = CurModule->getGlobalVariable("_prof_loops_running.stub"),
+                 *LoopEntryAddr = CurModule->getGlobalVariable("_prof_entry");
 
   IRBuilder<> Builder(Preheader, Preheader->getTerminator());
   Constant *Zero = ConstantInt::get(Int32Ty, 0),
@@ -163,33 +163,55 @@ void LoopInstrumentation::instrumentLoop(unsigned Idx, Loop *L)
   }
 }
 
-void LoopInstrumentation::declareGlobals(std::vector<Constant *> &LoopProfiles)
+void LoopInstrumentation::initGlobals(std::vector<Constant *> &LoopProfiles)
 { 
   LLVMContext &Ctx = CurModule->getContext();
   unsigned NumLoops = LoopProfiles.size();
 
   Type *Int32Ty = Type::getInt32Ty(Ctx);
 
+  // initialize `_prof_loops`
+  GlobalVariable *Stub = CurModule->getGlobalVariable("_prof_loops.stub");
   ProfileArrTy = ArrayType::get(LoopProfileTy, NumLoops);
   Constant *ArrContent = ConstantArray::get(ProfileArrTy, LoopProfiles);
-  // declare `_prof_loops`
-  new GlobalVariable(*CurModule,
-      ProfileArrTy,
-      false, GlobalValue::ExternalLinkage,
-      ArrContent, "_prof_loops", nullptr,
-      GlobalVariable::NotThreadLocal,
-      0);
+  GlobalVariable *Loops = new GlobalVariable(*CurModule,
+                                             ProfileArrTy,
+                                             false, GlobalValue::ExternalLinkage,
+                                             ArrContent, "_prof_loops", nullptr,
+                                             GlobalVariable::NotThreadLocal,
+                                             0);
 
-  // declare `_prof_loops_sampled`
-  RunningArrTy = ArrayType::get(
-      Int32Ty, NumLoops);
+  // fix GEPs using `Stub` to use the correct type
+  for (auto &U : Stub->uses()) {
+    auto *User = U.getUser();
+    auto *GEP = dyn_cast<GetElementPtrInst>(User);
+    if (GEP) {
+      GEP->setSourceElementType(ProfileArrTy);
+    }
+  }
+  Stub->replaceAllUsesWith(Loops);
+  Stub->eraseFromParent();
+
+  // re-declare `_prof_loops_sampled`
+  Stub = CurModule->getGlobalVariable("_prof_loops_running.stub");
+  RunningArrTy = ArrayType::get(Int32Ty, NumLoops);
   // declare `_prof_loops_running` 
-  new GlobalVariable(*CurModule,
+  GlobalVariable *RunningArr = new GlobalVariable(*CurModule,
       RunningArrTy,
       false, GlobalValue::ExternalLinkage,
       ConstantAggregateZero::get(RunningArrTy), "_prof_loops_running", nullptr,
       GlobalVariable::NotThreadLocal,
       0);
+  // fix GEPs using `Stub` to use the correct type
+  for (auto &U : Stub->uses()) {
+    auto *User = U.getUser();
+    auto *GEP = dyn_cast<GetElementPtrInst>(User);
+    if (GEP) {
+      GEP->setSourceElementType(RunningArrTy);
+    }
+  }
+  Stub->replaceAllUsesWith(RunningArr);
+  Stub->eraseFromParent();
 
   // also define `_prof_num_loop`
   Constant *NumLoop = ConstantInt::get(Int32Ty, NumLoops, true);
@@ -199,14 +221,6 @@ void LoopInstrumentation::declareGlobals(std::vector<Constant *> &LoopProfiles)
       NumLoop, "_prof_num_loops", nullptr,
       GlobalVariable::NotThreadLocal,
       0); 
-
-  // declare `_prof_entry`
-  new GlobalVariable(*CurModule, 
-      Int32Ty,
-      false, GlobalValue::ExternalLinkage,
-      ConstantInt::get(Int32Ty, 0), "_prof_entry", nullptr,
-      GlobalVariable::NotThreadLocal,
-      0);
 }
 
 char LoopInstrumentation::ID = 1;
@@ -241,9 +255,7 @@ bool LoopInstrumentation::runOnModule(Module &M)
   // struct loop_profile { 
   //     char *func;
   //     int32_t header_id;
-  //     int32_t running;
   //     int64_t runs;
-  //     int64_t sampled;
   // };
   // ``` 
   LoopProfileTy = StructType::create(Ctx, "LoopProfile");
@@ -254,23 +266,53 @@ bool LoopInstrumentation::runOnModule(Module &M)
   };
   LoopProfileTy->setBody(Fields);
 
+  // declare "_prof_loops"
+  // this is actually a stub that will get replace later
+  // since we don't know how many loops there are in the loops (or other details) yet
+  ProfileArrTy = ArrayType::get(LoopProfileTy, 0);
+  new GlobalVariable(*CurModule,
+      ProfileArrTy,
+      false, GlobalValue::ExternalLinkage,
+      nullptr, "_prof_loops.stub", nullptr,
+      GlobalVariable::NotThreadLocal,
+      0);
+
+  Type *Int32Ty = Type::getInt32Ty(Ctx);
+  // declare `_prof_entry`
+  new GlobalVariable(*CurModule, 
+      Int32Ty,
+      false, GlobalValue::ExternalLinkage,
+      ConstantInt::get(Int32Ty, 0), "_prof_entry", nullptr,
+      GlobalVariable::NotThreadLocal,
+      0);
+
+  // declare `_prof_loops_running`
+  // same with `_prof_loops`, this is only a stub
+  RunningArrTy = ArrayType::get(Int32Ty, 0);
+  // declare `_prof_loops_running` 
+  new GlobalVariable(*CurModule,
+      RunningArrTy,
+      false, GlobalValue::ExternalLinkage,
+      ConstantAggregateZero::get(RunningArrTy), "_prof_loops_running.stub", nullptr,
+      GlobalVariable::NotThreadLocal,
+      0);
+
   std::vector<Constant *> LoopProfiles;
   std::vector<Loop *> LoopsToInstrument;
   for (Function &F : M.getFunctionList()) {
     // external function
     if (F.empty()) continue;
 
-    LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(F)
-      .getLoopInfo();
+    LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(F).getLoopInfo();
 
-    // declare global variable that refers to this function's name
+    // declare global str that refers to this function's name
     Constant *Str = ConstantDataArray::getString(Ctx, F.getName());
     GlobalVariable *GV = new GlobalVariable(M, Str->getType(),
         true, GlobalValue::PrivateLinkage,
         Str, "prof.fn", nullptr,
         GlobalVariable::NotThreadLocal,
         0);
-    Constant *Zero = ConstantInt::get(Type::getInt32Ty(Ctx), 0);
+    Constant *Zero = ConstantInt::get(Int32Ty, 0);
     std::vector<Constant *> Args = {Zero, Zero};
     Constant *FnName = ConstantExpr::getInBoundsGetElementPtr(Str->getType(), GV, Args); 
 
@@ -283,32 +325,12 @@ bool LoopInstrumentation::runOnModule(Module &M)
 
       LoopProfiles.push_back(getLoopProfileInitializer(FnName, L, i));
       LoopsToInstrument.push_back(L);
+
+      instrumentLoop(LoopProfiles.size()-1, L);
     }
   }
 
-  declareGlobals(LoopProfiles); 
-
-  // TODO
-  // avoid iterating through the module twice
-
-  unsigned Idx = 0;
-  for (Function &F : M.getFunctionList()) {
-    // function without implementation
-    if (F.empty()) continue;
-
-    LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(F)
-      .getLoopInfo();
-
-    unsigned i = 0;
-    for (BasicBlock &BB : F) {
-      ++i;
-      Loop *L = LI.getLoopFor(&BB);
-      if (!L || L->getParentLoop() ||
-          !L->isLoopSimplifyForm() || L->getHeader() != &BB) continue; 
-
-      instrumentLoop(Idx++, L);
-    }
-  }
+  initGlobals(LoopProfiles); 
 
   return true;
 } 
