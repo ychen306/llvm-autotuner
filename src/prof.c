@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <string.h>
 #include <math.h>
+#include <assert.h>
 
 #include "common.h"
 
@@ -70,13 +71,15 @@ static void create_profiles()
 {
 	profiles = malloc(sizeof (profile_t) * _prof_num_loops);
 	size_t i;
-	for (i = 0; i < _prof_num_loops; i++) 
-		profiles[i] = calloc(sizeof (struct fraction), _prof_num_loops);
+	for (i = 0; i < _prof_num_loops; i++) {
+		profiles[i] = calloc(_prof_num_loops, sizeof (struct fraction));
+	}
 }
 
 // exponential distribution with lambda = 1
 // note that this means the expected value is also one (E[X] = 1/lambda)
-// see
+//
+// stolen from:
 // https://en.wikipedia.org/wiki/Exponential_distribution#Generating_exponential_variates
 static inline float rand_exp()
 { 
@@ -138,9 +141,9 @@ static void collect_sample(int signo)
 void _prof_init() 
 { 
 	srand(time(NULL));
-	setup_timer();
 	create_profiles();
 	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
+	setup_timer();
 }
 
 void _prof_dump()
