@@ -347,16 +347,17 @@ bool LoopInstrumentation::runOnModule(Module &M)
     // a loop's header id has to start from 1, so use 0 for function
     LoopProfiles.push_back(getLoopProfileInitializer(FnName, 0));
 
+    for (BasicBlock &BB : F) {
+      // instrument returning block of `F`
+      if (isa<ReturnInst>(BB.getTerminator())) {
+        instrumentExit(&BB, FnRunningAddr);
+      }
+    }
+
     unsigned i = 0;
     for (BasicBlock &BB : F) {
       ++i;
       Loop *L = LI.getLoopFor(&BB);
-
-      // found returning block of `F`
-      if (isa<ReturnInst>(BB.getTerminator())) {
-        instrumentExit(&BB, FnRunningAddr);
-        continue; 
-      }
 
       if (!L || L->getParentLoop() ||
           !L->isLoopSimplifyForm() || L->getHeader() != &BB) continue;
@@ -396,9 +397,7 @@ int main(int argc, char **argv)
   Passes.add(new LoopInstrumentation());
   Passes.add(createBitcodeWriterPass(Out.os(), true));
 
-
   Passes.run(*M.get());
-
   
   Out.keep();
 }
