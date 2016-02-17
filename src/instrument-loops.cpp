@@ -213,17 +213,10 @@ void LoopInstrumentation::initGlobals(std::vector<Constant *> &LoopProfiles)
     auto *GEP = dyn_cast<GetElementPtrInst>(User);
     if (GEP) {
       GEP->setSourceElementType(ProfileArrTy);
-    } else {
-      errs() << "!!! " << isa<ConstantExpr>(User) << " --- " << *User << '\n';
     }
   }
   Stub->replaceAllUsesWith(Loops);
   Stub->eraseFromParent();
-  /*
-  for (const auto &U : Loops->users()) {
-    I = dyn_cast<GetElementPtrInst>(&U);
-  }
-  */
 
   // re-declare `_prof_loops_sampled`
   Stub = CurModule->getGlobalVariable("_prof_loops_running.stub");
