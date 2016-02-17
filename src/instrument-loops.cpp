@@ -92,22 +92,22 @@ struct LoopInstrumentation : public ModulePass {
 
   // insert code in the beginning of an entry block and return address it's matching address
   // in `_prof_loops_running`
-  Value *instrumentEntry(BasicBlock *Entry, unsigned Idx);
-  void instrumentExit(BasicBlock *Exit, Value *RunningAddr);
+  Value *instrumentEntry(BasicBlock *Entry, unsigned Idx, bool Exclusive=true);
+  void instrumentExit(BasicBlock *Exit, Value *RunningAddr, bool Exclusive=true);
   // instrument a loop to record loop entrance/exit
   void instrumentLoop(unsigned Idx, Loop *L);
 
   const char *getPassName() const override { return "LoopInstrumentation pass"; }
 };
 
-void LoopInstrumentation::instrumentExit(BasicBlock *Exit, Value *RunningAddr)
+void LoopInstrumentation::instrumentExit(BasicBlock *Exit, Value *RunningAddr, bool Exclusive)
 {
   LLVMContext &Ctx = CurModule->getContext();
   Type *Int32Ty = Type::getInt32Ty(Ctx);
   GlobalVariable *LoopEntryAddr = CurModule->getGlobalVariable("_prof_entry");
 
   // insert in the beginning of the exit block
-  IRBuilder<> Builder = createFrontBuilder(Exit);
+  auto Builder = Exclusive ? createFrontBuilder(Exit) : IRBuilder<>(Exit, Exit->getTerminator());
   Value *LoopEntry = Builder.CreateLoad(LoopEntryAddr);
 
   // emit `_prof_loops_running[idx] -= _prof_entry`
@@ -121,7 +121,7 @@ void LoopInstrumentation::instrumentExit(BasicBlock *Exit, Value *RunningAddr)
   Builder.CreateStore(DecLoopEntry, LoopEntryAddr);
 }
 
-Value *LoopInstrumentation::instrumentEntry(BasicBlock *Entry, unsigned Idx)
+Value *LoopInstrumentation::instrumentEntry(BasicBlock *Entry, unsigned Idx, bool Exclusive)
 {
   LLVMContext &Ctx = CurModule->getContext();
   Type *Int32Ty = Type::getInt32Ty(Ctx),
@@ -131,17 +131,18 @@ Value *LoopInstrumentation::instrumentEntry(BasicBlock *Entry, unsigned Idx)
                  *RunningArr = CurModule->getGlobalVariable("_prof_loops_running.stub"),
                  *LoopEntryAddr = CurModule->getGlobalVariable("_prof_entry");
 
-  // insert instructions at the end of entry block
-  IRBuilder<> Builder(Entry, Entry->getTerminator());
+  auto Builder = Exclusive ?
+    IRBuilder<>(Entry, Entry->getTerminator()) :
+    createFrontBuilder(Entry);
   Constant *Zero = ConstantInt::get(Int32Ty, 0),
            *RunsIdx = ConstantInt::get(Int32Ty, 2);
 
   // get Profile from global array
   std::vector<Value *> ProfileIndexes { Zero, ConstantInt::get(Int32Ty, Idx) }; 
-  Value *Profile = Builder.CreateInBoundsGEP(
+  Value *Profile = Builder.Insert(GetElementPtrInst::CreateInBounds(
       ProfileArrTy,
       Profiles,
-      ProfileIndexes); 
+      ProfileIndexes)); 
 
   // emit code for `++_prof_entry`
   Value *LoopEntry = Builder.CreateBinOp(Instruction::Add,
@@ -150,10 +151,10 @@ Value *LoopInstrumentation::instrumentEntry(BasicBlock *Entry, unsigned Idx)
 
   // emit `_prof_loops_running[idx] += ++_prof_entry`
   std::vector<Value *> RunningIndexes { Zero, ConstantInt::get(Int32Ty, Idx) }; 
-  Value *RunningAddr = Builder.CreateInBoundsGEP(
+  Value *RunningAddr = Builder.Insert(GetElementPtrInst::CreateInBounds(
       RunningArrTy,
       RunningArr, 
-      RunningIndexes); 
+      RunningIndexes)); 
   Builder.CreateStore(
       Builder.CreateBinOp(Instruction::Add, LoopEntry, Builder.CreateLoad(RunningAddr)),
       RunningAddr);
@@ -206,16 +207,23 @@ void LoopInstrumentation::initGlobals(std::vector<Constant *> &LoopProfiles)
                                              GlobalVariable::NotThreadLocal,
                                              0);
 
-  // fix GEPs using `Stub` to use the correct type
+  // fix GEPs by changing `Stub` to use the correct type
   for (auto &U : Stub->uses()) {
     auto *User = U.getUser();
     auto *GEP = dyn_cast<GetElementPtrInst>(User);
     if (GEP) {
       GEP->setSourceElementType(ProfileArrTy);
+    } else {
+      errs() << "!!! " << isa<ConstantExpr>(User) << " --- " << *User << '\n';
     }
   }
   Stub->replaceAllUsesWith(Loops);
   Stub->eraseFromParent();
+  /*
+  for (const auto &U : Loops->users()) {
+    I = dyn_cast<GetElementPtrInst>(&U);
+  }
+  */
 
   // re-declare `_prof_loops_sampled`
   Stub = CurModule->getGlobalVariable("_prof_loops_running.stub");
@@ -343,14 +351,14 @@ bool LoopInstrumentation::runOnModule(Module &M)
     std::vector<Constant *> Args = {Zero, Zero};
     Constant *FnName = ConstantExpr::getInBoundsGetElementPtr(Str->getType(), GV, Args); 
 
-    Value *FnRunningAddr = instrumentEntry(&F.getEntryBlock(), Idx++);
+    Value *FnRunningAddr = instrumentEntry(&F.getEntryBlock(), Idx++, false);
     // a loop's header id has to start from 1, so use 0 for function
     LoopProfiles.push_back(getLoopProfileInitializer(FnName, 0));
 
+    // instrument returning blocks of `F`
     for (BasicBlock &BB : F) {
-      // instrument returning block of `F`
       if (isa<ReturnInst>(BB.getTerminator())) {
-        instrumentExit(&BB, FnRunningAddr);
+        instrumentExit(&BB, FnRunningAddr, false);
       }
     }
 
@@ -368,7 +376,6 @@ bool LoopInstrumentation::runOnModule(Module &M)
     }
   }
 
-  assert(Idx == LoopProfiles.size());
   initGlobals(LoopProfiles); 
 
   return true;
