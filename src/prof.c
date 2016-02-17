@@ -13,8 +13,8 @@
 #define PROF_FLAT_OUT "loop-prof.flat.csv" 
 #define PROF_GRAPH_OUT "loop-prof.graph.csv"
 
-// sample every 10 nano seconds
-#define SAMPLING_INTERVAL 10
+// sample every 1 ms
+#define SAMPLING_INTERVAL 1000
 
 void _prof_init() __attribute__ ((constructor));
 void _prof_dump() __attribute__ ((destructor));
@@ -99,7 +99,7 @@ static void setup_timer()
 	timerspec.it_interval.tv_sec = 0;
 	timerspec.it_interval.tv_usec = 0;
 	timerspec.it_value.tv_sec = 0;
-	timerspec.it_value.tv_usec = SAMPLING_INTERVAL * rand_exp(); 
+	timerspec.it_value.tv_usec = SAMPLING_INTERVAL * (rand_exp() + 0.5); 
 
 	if (signal(SIGPROF, collect_sample) == SIG_ERR) {
 		perror("Unable to catch SIGPROF");
