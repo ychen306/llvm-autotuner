@@ -13,8 +13,8 @@
 #define PROF_FLAT_OUT "loop-prof.flat.csv" 
 #define PROF_GRAPH_OUT "loop-prof.graph.csv"
 
-// sample every 1ms
-#define SAMPLING_INTERVAL 1000
+// sample every 10 nano seconds
+#define SAMPLING_INTERVAL 10
 
 void _prof_init() __attribute__ ((constructor));
 void _prof_dump() __attribute__ ((destructor));
