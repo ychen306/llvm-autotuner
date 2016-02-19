@@ -16,6 +16,8 @@
 // sample every 1 ms
 #define SAMPLING_INTERVAL 1000
 
+#define SAMPLE_SIZE ((sizeof (uint32_t)) * _prof_num_loops)
+
 void _prof_init() __attribute__ ((constructor));
 void _prof_dump() __attribute__ ((destructor));
 
@@ -32,6 +34,11 @@ extern struct loop_data _prof_loops[];
 extern uint32_t _prof_loops_running[];
 
 static struct timespec begin;
+
+// dump is also a noun, right ("take a dump")?
+uint32_t **dump;
+size_t dump_cap;
+size_t num_sampled;
 
 struct fraction { 
 	size_t a, b; 
@@ -88,7 +95,7 @@ static inline float rand_exp()
 	return x;
 }
 
-static void collect_sample(int signo);
+static void dump_sample(int signo);
 
 // setup a timer that fires in T microseconds
 // T is a exponential random variable with expectation of `SAMPLING_INTERVAL` microseconds
@@ -101,7 +108,7 @@ static void setup_timer()
 	timerspec.it_value.tv_sec = 0;
 	timerspec.it_value.tv_usec = SAMPLING_INTERVAL * (rand_exp() + 0.5); 
 
-	if (signal(SIGPROF, collect_sample) == SIG_ERR) {
+	if (signal(SIGPROF, dump_sample) == SIG_ERR) {
 		perror("Unable to catch SIGPROF");
 		exit(1);
 	}
@@ -109,17 +116,17 @@ static void setup_timer()
 	setitimer(ITIMER_PROF, &timerspec, NULL);
 }
 
-static void collect_sample(int signo)
+static void collect_sample(uint32_t *running_instance)
 { 
 	// update profiles of all the loops given a new sample
 	size_t i, j;
 	for (i = 0; i < _prof_num_loops; i++) {
-		if (_prof_loops_running[i]) record_hit(profiles[i], i);
+		if (running_instance[i]) record_hit(profiles[i], i);
 		else record_miss(profiles[i], i);
 
 		for (j = i+1; j < _prof_num_loops; j++) { 
-			if (_prof_loops_running[i] && _prof_loops_running[j]) { 
-				if (_prof_loops_running[i] < _prof_loops_running[j]) {
+			if (running_instance[i] && running_instance[j]) { 
+				if (running_instance[i] < running_instance[j]) {
 					// i called j 
 					record_hit(profiles[i], j);
 					record_miss(profiles[j], i);
@@ -128,18 +135,33 @@ static void collect_sample(int signo)
 					record_hit(profiles[j], i);
 					record_miss(profiles[i], j);
 				}
-			} else if (_prof_loops_running[i]) {
+			} else if (running_instance[i]) {
 				record_miss(profiles[i], j);
-			} else if (_prof_loops_running[j]) {
+			} else if (running_instance[j]) {
 				record_miss(profiles[j], i);
 			}
 		}
 	}
+}
+
+static void dump_sample(int signo)
+{
+	if (num_sampled++ == dump_cap) {
+		dump_cap *= 2;
+		dump = realloc(dump, dump_cap * SAMPLE_SIZE);
+	}
+	uint32_t *sample = malloc(SAMPLE_SIZE);
+	memcpy(sample, _prof_loops_running, SAMPLE_SIZE);
+	dump[num_sampled-1] = sample;
+
 	setup_timer();
 }
 
 void _prof_init() 
 { 
+	dump_cap = 1000;
+	dump = malloc(dump_cap * SAMPLE_SIZE);
+	
 	srand(time(NULL));
 	create_profiles();
 	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
@@ -148,10 +170,17 @@ void _prof_init()
 
 void _prof_dump()
 { 
+	size_t i, j;
+
 	// disarm timer
 	struct itimerval timerspec;
 	memset(&timerspec, 0, sizeof timerspec);
 	setitimer(SIGPROF, &timerspec, NULL);
+
+	// read sample from the dump
+	for (i = 0; i < num_sampled; i++) {
+		collect_sample(dump[i]);
+	}
 
 	// time the process in ms
 	struct timespec end;
@@ -163,7 +192,6 @@ void _prof_dump()
 		 *graph_out = fopen(PROF_GRAPH_OUT, "wb");
 
 	fprintf(flat_out, "function,header-id,runs,time(pct),time(ms)\n");
-	size_t i, j;
 	for (i = 0; i < _prof_num_loops; i++) { 
 		struct loop_data *loop = &_prof_loops[i];
 		float pct = frac2num(&profiles[i][i]); 

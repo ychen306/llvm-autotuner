@@ -1,0 +1,1 @@
+extract-loops raytracer.bc -p extracted -l_Z5traceIfE4Vec3IT_ERKS2_S4_RKNSt3__16vectorIP6SphereIS1_ENS5_9allocatorIS9_EEEERKi,2

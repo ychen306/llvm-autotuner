@@ -1,12 +1,12 @@
 # makefile for generating `loop-prof.out.csv` for a bitcode file
 
 # begin config
-BC = raytracer.bc
+BC = bzip2.bc
 BIN_DIR = bin
 OBJ_DIR = obj
 
 # command line argument to run the executable
-ARGS =
+ARGS = bzip2.input.program 10
 # end config
 
 OS := $(shell sh -c 'uname -s 2>/dev/null || echo not')

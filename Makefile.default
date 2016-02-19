@@ -6,7 +6,7 @@ CC = clang
 SRC_DIR = src
 BIN_DIR = bin
 OBJ_DIR = obj
-TOOLS = extract-loops instrument-loops create-server
+TOOLS = extract-loops instrument-loops create-server combine
 BC = prof.bc server.bc
 
 EXES = $(TOOLS:%=$(BIN_DIR)/%)

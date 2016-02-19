@@ -334,6 +334,7 @@ bool LoopInstrumentation::runOnModule(Module &M)
       }
     }
 
+    /*
     unsigned i = 0;
     for (BasicBlock &BB : F) {
       ++i;
@@ -344,6 +345,7 @@ bool LoopInstrumentation::runOnModule(Module &M)
 
       instrumentLoop(Idx++, L);
     }
+    */
   }
 
   return true;

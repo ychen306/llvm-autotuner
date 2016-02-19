@@ -294,7 +294,8 @@ int main(int argc, char **argv)
   }
 
   std::error_code EC;
-  tool_output_file Out(newFileName(), EC, sys::fs::F_None);
+  std::string MainModuleName = newFileName();
+  tool_output_file Out(MainModuleName, EC, sys::fs::F_None);
   if (EC) {
     errs() << EC.message() << '\n';
     return 1;
@@ -313,8 +314,8 @@ int main(int argc, char **argv)
   PM.add(createBitcodeWriterPass(Out.os(), true));
   PM.run(*M.get()); 
 
-  std::ofstream ExtractedList;
-  ExtractedList.open(ExtractedListFile);
+  std::ofstream ExtractedList(ExtractedListFile);
+  ExtractedList << MainModuleName << '\n';
 
   // TODO
   // maybe we have to delete cloned module?
