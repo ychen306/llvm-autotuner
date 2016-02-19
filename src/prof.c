@@ -148,7 +148,7 @@ static void dump_sample(int signo)
 {
 	if (num_sampled++ == dump_cap) {
 		dump_cap *= 2;
-		dump = realloc(dump, dump_cap * SAMPLE_SIZE);
+		dump = realloc(dump, dump_cap * sizeof (uint32_t *));
 	}
 	uint32_t *sample = malloc(SAMPLE_SIZE);
 	memcpy(sample, _prof_loops_running, SAMPLE_SIZE);
@@ -160,7 +160,7 @@ static void dump_sample(int signo)
 void _prof_init() 
 { 
 	dump_cap = 1000;
-	dump = malloc(dump_cap * SAMPLE_SIZE);
+	dump = malloc(dump_cap * sizeof (uint32_t *));
 	
 	srand(time(NULL));
 	create_profiles();
@@ -180,7 +180,9 @@ void _prof_dump()
 	// read sample from the dump
 	for (i = 0; i < num_sampled; i++) {
 		collect_sample(dump[i]);
+		free(dump[i]);
 	}
+	free(dump);
 
 	// time the process in ms
 	struct timespec end;
