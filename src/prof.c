@@ -148,14 +148,8 @@ static void collect_sample(uint32_t *running_instance)
 
 static void dump_sample(int signo)
 {
-	if (_prof_entry < 0) {
-		uint32_t i;
-		for (i = 0; i < _prof_num_loops; i++) {
-			if (_prof_loops_running[i])
-			fprintf(stderr, "!!! %s\n", _prof_loops[i].func);
-		}
-		abort();
-	}
+	assert(_prof_entry >= 0);
+
 	if (num_sampled++ == dump_cap) {
 		dump_cap *= 2;
 		dump = realloc(dump, dump_cap * sizeof (uint32_t *));
