@@ -16,7 +16,7 @@ cc fib.o -o fib
 Transforms a bitcode file into a "server" that runs specified functions upon request and reports the time it takes to run those functions. Every function call will have its own worker process responsible for actually performing the call (such transformation is however upperbounded so as not to consume too much resource). Multiple functions can be specified. For example, to make a server that runs `loop` (and `loop` only) repeatedly in `x.bc`, one can do
 ```shell
 # build the server
-./create-server -f=loop -o x.server.bc
+./create-server -f=loop -o x.server.bc x.bc
 llc x.server.bc -o x.server.o -filetype=obj 
 server x.server.o -o x.server -ldl
 
