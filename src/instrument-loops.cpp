@@ -26,6 +26,7 @@
 #include <llvm/Support/raw_ostream.h>
 
 #include <vector>
+#include <set>
 #include <utility>
 
 using namespace llvm;
@@ -176,15 +177,13 @@ Value *LoopInstrumentation::instrumentEntry(BasicBlock *Entry, unsigned Idx, boo
 void LoopInstrumentation::instrumentLoop(unsigned Idx, Loop *L)
 {
   BasicBlock *Preheader = L->getLoopPreheader(); 
-  assert(Preheader && "loop not simplified");
-
   Value *RunningAddr = instrumentEntry(Preheader, Idx);
 
-  assert(L->hasDedicatedExits() && "loop is not simplified");
   SmallVector<BasicBlock *, 4> Exits;
   L->getExitBlocks(Exits);
+  std::set<BasicBlock *> UniqExits(Exits.begin(), Exits.end());
 
-  for (BasicBlock *BB : Exits) { 
+  for (BasicBlock *BB : UniqExits) { 
     instrumentExit(BB, RunningAddr);
   }
 }

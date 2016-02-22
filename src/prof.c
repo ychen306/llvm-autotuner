@@ -33,6 +33,8 @@ extern struct loop_data _prof_loops[];
 
 extern uint32_t _prof_loops_running[];
 
+extern int32_t _prof_entry;
+
 static struct timespec begin;
 
 // dump is also a noun, right ("take a dump")?
@@ -146,6 +148,14 @@ static void collect_sample(uint32_t *running_instance)
 
 static void dump_sample(int signo)
 {
+	if (_prof_entry < 0) {
+		uint32_t i;
+		for (i = 0; i < _prof_num_loops; i++) {
+			if (_prof_loops_running[i])
+			fprintf(stderr, "!!! %s\n", _prof_loops[i].func);
+		}
+		abort();
+	}
 	if (num_sampled++ == dump_cap) {
 		dump_cap *= 2;
 		dump = realloc(dump, dump_cap * sizeof (uint32_t *));
@@ -168,6 +178,16 @@ void _prof_init()
 	setup_timer();
 }
 
+void verify()
+{
+	assert(_prof_entry == 0);
+
+	uint32_t i;
+	for (i = 0; i < _prof_num_loops; i++) {
+		assert(_prof_loops_running[i] == 0 && "un-existed loop");
+	}
+}
+
 void _prof_dump()
 { 
 	size_t i, j;
@@ -176,6 +196,8 @@ void _prof_dump()
 	struct itimerval timerspec;
 	memset(&timerspec, 0, sizeof timerspec);
 	setitimer(SIGPROF, &timerspec, NULL);
+
+	verify();
 
 	// read sample from the dump
 	for (i = 0; i < num_sampled; i++) {
