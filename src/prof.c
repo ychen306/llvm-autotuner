@@ -12,9 +12,10 @@
 
 #define PROF_FLAT_OUT "loop-prof.flat.csv" 
 #define PROF_GRAPH_OUT "loop-prof.graph.csv"
+#define PROF_DUMP "loop_prof.out"
 
-// sample every 1 ms
-#define SAMPLING_INTERVAL 1000
+// sample every 100 us
+#define SAMPLING_INTERVAL 100
 
 #define SAMPLE_SIZE ((sizeof (uint32_t)) * _prof_num_loops)
 
@@ -37,9 +38,7 @@ extern int32_t _prof_entry;
 
 static struct timespec begin;
 
-// dump is also a noun, right ("take a dump")?
-uint32_t **dump;
-size_t dump_cap;
+FILE *dump;
 size_t num_sampled;
 
 struct fraction { 
@@ -149,22 +148,18 @@ static void collect_sample(uint32_t *running_instance)
 static void dump_sample(int signo)
 {
 	assert(_prof_entry >= 0);
-
-	if (num_sampled++ == dump_cap) {
-		dump_cap *= 2;
-		dump = realloc(dump, dump_cap * sizeof (uint32_t *));
-	}
-	uint32_t *sample = malloc(SAMPLE_SIZE);
-	memcpy(sample, _prof_loops_running, SAMPLE_SIZE);
-	dump[num_sampled-1] = sample;
-
+	num_sampled++;
+	size_t num_written = 0;
+	do {
+		ssize_t bytes = fwrite(_prof_loops_running+num_written, sizeof (uint32_t), _prof_num_loops-num_written, dump);
+		num_written += bytes;
+	} while (num_written < _prof_num_loops);
 	setup_timer();
 }
 
 void _prof_init() 
 { 
-	dump_cap = 1000;
-	dump = malloc(dump_cap * sizeof (uint32_t *));
+	dump = fopen(PROF_DUMP, "w+");
 	
 	srand(time(NULL));
 	create_profiles();
@@ -190,15 +185,23 @@ void _prof_dump()
 	struct itimerval timerspec;
 	memset(&timerspec, 0, sizeof timerspec);
 	setitimer(SIGPROF, &timerspec, NULL);
+	signal(SIGPROF, SIG_IGN);
 
 	verify();
 
 	// read sample from the dump
+	uint32_t *buf = malloc(sizeof (uint32_t) * _prof_num_loops);
+	rewind(dump);
 	for (i = 0; i < num_sampled; i++) {
-		collect_sample(dump[i]);
-		free(dump[i]);
-	}
-	free(dump);
+		size_t num_read = 0;
+		do {
+			size_t bytes = fread(buf+num_read, sizeof (uint32_t), _prof_num_loops-num_read, dump); 
+			num_read +=  bytes;
+		} while (num_read < _prof_num_loops);
+		collect_sample(buf);
+	} 
+	free(buf);
+	fclose(dump);
 
 	// time the process in ms
 	struct timespec end;
