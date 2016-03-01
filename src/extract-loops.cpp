@@ -23,7 +23,7 @@
 #include <llvm/Support/ToolOutputFile.h>
 #include <llvm/Support/raw_ostream.h>
 
-#include <fstream> 
+#include <fstream>
 #include <sstream>
 #include <utility>
 #include <set>
@@ -45,7 +45,7 @@ struct LoopHeader {
   std::string Function;
   unsigned HeaderId;
 
-  bool operator==(LoopHeader &other) { 
+  bool operator==(LoopHeader &other) {
     return Function == other.Function && HeaderId == other.HeaderId;
   }
 };
@@ -57,7 +57,7 @@ void error(std::string Msg)
   std::abort();
 }
 
-struct LoopHeaderParser : public cl::parser<LoopHeader> { 
+struct LoopHeaderParser : public cl::parser<LoopHeader> {
   LoopHeaderParser(cl::Option &O) : parser(O) {}
 
   bool parse(cl::Option &O, StringRef ArgName, const std::string &Arg, LoopHeader &LH) {
@@ -79,7 +79,7 @@ struct LoopHeaderParser : public cl::parser<LoopHeader> {
 
 static cl::opt<std::string>
 ExtractedListFile(
-  "e", 
+  "e",
   cl::desc("file where name of extracted functions will be listed"),
   cl::init("extracted.list"));
 
@@ -115,7 +115,7 @@ struct LoopExtractor : public ModulePass {
   }
 
   const char *getPassName() const override { return "LoopExtractor pass"; }
-}; 
+};
 
 void LoopExtractor::getAnalysisUsage(AnalysisUsage &AU) const
 {
@@ -123,7 +123,7 @@ void LoopExtractor::getAnalysisUsage(AnalysisUsage &AU) const
   AU.addRequired<DominatorTreeWrapperPass>();
 }
 
-char LoopExtractor::ID = 42; 
+char LoopExtractor::ID = 42;
 
 
 // define `initializeLoopExtractorPass()`
@@ -165,19 +165,21 @@ std::vector<std::vector<float>> loadDynCallGraph(unsigned NumNodes)
 {
   std::ifstream Fin("loop-prof.graph.csv");
   std::vector<std::vector<float>> G(NumNodes);
-  for (unsigned i = 0; i < NumNodes; i++) { 
+  std::string NumStr;
+  for (unsigned i = 0; i < NumNodes; i++) {
     G[i].resize(NumNodes);
     for (unsigned j = 0; j < NumNodes; j++) {
-      Fin >> G[i][j];
+      Fin >> NumStr;
+	  G[i][j] = std::stof(NumStr);
     }
   }
   return G;
 }
 
 bool LoopExtractor::runOnModule(Module &M)
-{ 
-  bool Changed = false; 
- 
+{
+  bool Changed = false;
+
   std::vector<LoopHeader> CGNodes = readGraphNodeMeta();
   std::vector<std::vector<float>> DynCG = loadDynCallGraph(CGNodes.size());
 
@@ -189,7 +191,7 @@ bool LoopExtractor::runOnModule(Module &M)
   std::vector<std::pair<Loop *, LoopHeader>> ToExtract;
 
   for (auto I : Loops) {
-    Function *F = M.getFunction(I.first); 
+    Function *F = M.getFunction(I.first);
     if (F == nullptr)
       error("input module doesn't contain function " + I.first);
 
@@ -198,7 +200,7 @@ bool LoopExtractor::runOnModule(Module &M)
     LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*F)
       .getLoopInfo();
     DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>(*F)
-      .getDomTree(); 
+      .getDomTree();
 
     unsigned i = 0;
 
@@ -217,11 +219,11 @@ bool LoopExtractor::runOnModule(Module &M)
     }
 
     // actually extract loops
-    for (auto &Pair: ToExtract) { 
-      Loop *L = Pair.first; 
+    for (auto &Pair: ToExtract) {
+      Loop *L = Pair.first;
       LoopHeader &Header = Pair.second;
-      CodeExtractor CE(DT, *L, true); 
-      Function *Extracted = CE.extractCodeRegion(); 
+      CodeExtractor CE(DT, *L, true);
+      Function *Extracted = CE.extractCodeRegion();
       if (!Extracted) continue;
 
       Extracted->setVisibility(GlobalValue::DefaultVisibility);
@@ -235,9 +237,9 @@ bool LoopExtractor::runOnModule(Module &M)
           break;
         }
       }
-      // find out what functions are called by the loops 
-      for (unsigned CalleeIdx = 0, E = DynCG.size(); CalleeIdx < E; CalleeIdx++) { 
-        if (CalleeIdx == CallerIdx) continue; 
+      // find out what functions are called by the loops
+      for (unsigned CalleeIdx = 0, E = DynCG.size(); CalleeIdx < E; CalleeIdx++) {
+        if (CalleeIdx == CallerIdx) continue;
         float TimeSpent = DynCG[CallerIdx][CalleeIdx];
         if (!std::isnan(TimeSpent) && TimeSpent > 0) {
           auto &Node = CGNodes[CalleeIdx];
@@ -261,7 +263,7 @@ std::string newFileName()
 
 // return functions called (including those called indirectly) by `Caller`)
 std::vector<GlobalValue *> getCalledFuncs(Module *M, Function *Caller)
-{ 
+{
   std::vector<GlobalValue *> Funcs;
   for (auto &CalleeName : Called[Caller->getName()]) {
     Funcs.push_back(M->getFunction(CalleeName));
@@ -285,7 +287,7 @@ int main(int argc, char **argv)
   cl::ParseCommandLineOptions(argc, argv, "top-level loop extractor");
 
   LLVMContext &Context = getGlobalContext();
-  SMDiagnostic Err; 
+  SMDiagnostic Err;
   std::unique_ptr<Module> M = parseIRFile(InputFilename, Err, Context);
 
   if (!M.get()) {
@@ -304,7 +306,7 @@ int main(int argc, char **argv)
   legacy::PassManager Extraction;
 
   Extraction.add(new LoopExtractor());
-  Extraction.run(*M.get()); 
+  Extraction.run(*M.get());
 
   Module *CopiedModule = CloneModule(M.get());
 
@@ -312,7 +314,7 @@ int main(int argc, char **argv)
   // removed extracted loops from the main module
   PM.add(createGVExtractionPass(ExtractedLoops, true));
   PM.add(createBitcodeWriterPass(Out.os(), true));
-  PM.run(*M.get()); 
+  PM.run(*M.get());
 
   std::ofstream ExtractedList(ExtractedListFile);
   ExtractedList << MainModuleName << '\n';
@@ -323,7 +325,7 @@ int main(int argc, char **argv)
   // now remove everything in a new module except
   // the extracted loop and its callees (which will also be internalized)
   for (GlobalValue *Extracted : ExtractedLoops) {
-    Module *NewModule = CloneModule(CopiedModule); 
+    Module *NewModule = CloneModule(CopiedModule);
     std::string ExtractedName = Extracted->getName();
     Function *ExtractedF = NewModule->getFunction(ExtractedName);
     std::vector<GlobalValue *> ToPreserve = getCalledFuncs(NewModule, ExtractedF);
@@ -344,10 +346,10 @@ int main(int argc, char **argv)
     for (GlobalVariable *GV : ToRemove)
       GV->removeFromParent();
 
-    legacy::PassManager PM; 
+    legacy::PassManager PM;
     PM.add(createGVExtractionPass(ToPreserve, false));
     PM.add(createInternalizePass(std::vector<const char *>{ExtractedName.c_str()}));
-    PM.add(createBitcodeWriterPass(ExtractedOut.os(), true)); 
+    PM.add(createBitcodeWriterPass(ExtractedOut.os(), true));
     PM.run(*NewModule);
 
     ExtractedOut.keep();
