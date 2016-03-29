@@ -277,29 +277,26 @@ struct GraphNodeMeta {
   bool IsFunc; // could be a loop
 };
 
-// change internal non-constant globals to external and rename to avoid name-conflict
-void externalize(Module &M)
-{ 
+void externalizeSymbol(GlobalValue &G)
+{
   char FilePath[PATH_MAX];
   realpath(InputFilename.c_str(), FilePath);
-  for (GlobalVariable &G : M.globals()) {
-    if (G.isConstant()) continue;
-
-    if (G.hasInternalLinkage() || G.hasPrivateLinkage()) {
-      G.setName(std::string("llvm.autotuner.internals.")+FilePath+"."+G.getName());
+    if (G.hasHiddenVisibility() || G.hasInternalLinkage() || G.hasPrivateLinkage()) {
+      G.setName(std::string("autotuner.internals.")+FilePath+"."+G.getName());
       G.setVisibility(GlobalValue::DefaultVisibility);
       G.setLinkage(GlobalValue::ExternalLinkage);
     }
-  }
 }
 
-std::vector<GlobalValue *> getGlobals(Module *M)
-{
-  std::vector<GlobalValue *> Globals;
-  for (GlobalVariable &G : M->globals()) {
-    Globals.push_back(&G);
+// change internal non-constant globals to external and rename to avoid name-conflict
+void externalize(Module &M)
+{ 
+  for (GlobalVariable &G : M.globals()) {
+    externalizeSymbol(G);
   }
-  return Globals;
+  for (Function &F : M.functions()) {
+    externalizeSymbol(F);
+  }
 }
 
 int main(int argc, char **argv)
@@ -321,32 +318,13 @@ int main(int argc, char **argv)
 
   std::error_code EC;
 
-  externalize(*M.get());
-
-  // create a module to hold all the globals (only)
-  Module *GlobalsModule = CloneModule(M.get());
-  legacy::PassManager GlobalExtraction;
-  std::string GlobalsFName = newFileName();
-  tool_output_file GlobalsOut(GlobalsFName, EC, sys::fs::F_None);
-  if (EC) {
-    errs() << EC.message() << '\n';
-    return 1;
-  }
-  auto Globals = getGlobals(GlobalsModule);
-  GlobalExtraction.add(createGVExtractionPass(Globals, false)); 
-  GlobalExtraction.add(createBitcodeWriterPass(GlobalsOut.os(), true));
-  GlobalExtraction.run(*GlobalsModule);
-  GlobalsOut.keep();
-  delete GlobalsModule;
-
   std::ofstream ExtractedList(ExtractedListFile);
-  ExtractedList << GlobalsFName << '\n';
 
   legacy::PassManager Extraction;
 
-  // extract loops and remove globals
-  Globals = getGlobals(M.get());
-  Extraction.add(createGVExtractionPass(Globals, true));
+  externalize(*M.get());
+
+  // extract loops
   Extraction.add(new LoopExtractor());
   Extraction.run(*M.get());
 
@@ -359,7 +337,7 @@ int main(int argc, char **argv)
     errs() << EC.message() << '\n';
     return 1;
   }
-  // removed extracted loops from the main module
+  // remove extracted loops from the main module
   PM.add(createGVExtractionPass(ExtractedLoops, true));
   PM.add(createBitcodeWriterPass(Out.os(), true));
   PM.run(*M.get());
