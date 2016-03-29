@@ -13,87 +13,92 @@
 
 #include "common.h"
 
-#define ERROR '\0'
-#define SUCCESS '\1'
-
 #define KILL '\0'
+
+#define LIBPATH_MAX_LEN 100
 
 #define CANT_LOAD_LIB "unable to open library"
 #define CANT_LOAD_FUNC "unable to load function from library"
 
 #define OUT_FILENAME "worker-data.txt"
-#define LIBPATH_MAX_LEN 100
 #define MAXFD 256
 #define DEFAULT_MAX_CLIENT 4
 #define MAX_CLIENT
-// one control byte + path + description
-#define RESP_SIZE (LIBPATH_MAX_LEN + 1 + 100)
+
+extern uint32_t _server_invos[];
+extern uint32_t _server_num_invos;
 
 void _server_init() __attribute__ ((constructor));
-void _server_shutdown() __attribute__ ((destructor)); 
 
-FILE *out_file = NULL;
 int max_client; 
 
 int is_parent = 1;
 
-// make an error response
-static inline void *make_error(char *msg)
+struct response {
+	int success;
+	double elapsed;
+	char msg[LIBPATH_MAX_LEN+100];
+};
+
+static inline struct response *make_error(char *msg)
 { 
-    char *resp = calloc(1, RESP_SIZE);
-    resp[0] = ERROR;
-    strcpy(resp+1, msg);
-    return resp;
+	struct response *resp = malloc(sizeof (struct response));
+	resp->success = 0;
+	strcpy(resp->msg, msg);
+	return resp;
 }
 
-// make a success response
-static inline void *make_report(float time_spent)
+static inline struct response *make_report(float time_spent)
 { 
-    char *resp = calloc(1, RESP_SIZE);
-    resp[0] = SUCCESS;
-    float *time_ptr = (float *)(resp + 1);
-    *time_ptr = time_spent;
-    return resp;
+	struct response *resp = malloc(sizeof (struct response));
+	resp->success = 1;
+	resp->elapsed = time_spent;
+	return resp;
 }
 
-static inline void *respond(int fd, void *resp)
+// send response to the client and kill current process
+static inline void *respond(int fd, struct response *resp)
 { 
-    write(fd, resp, RESP_SIZE);
+    write(fd, resp, sizeof (struct response));
     free(resp);
     exit(0);
 }
 
-static inline void dump_worker_data(const char *funcname, const char *sock_path)
+static inline void dump_worker_data(const char *sock_path)
 { 
-    fprintf(out_file, "%s\t%s\n", funcname, sock_path);
-    // in case buffer gets written multiple times when
-    // forked processes exits
-    fflush(out_file);
+    FILE *out_file = fopen(OUT_FILENAME, "a");
+    fprintf(out_file, "%s\n", sock_path);
+	fclose(out_file);
 } 
 
-void _server_spawn_worker(
-        void (*orig_func)(void *), char *funcname, void *args, uint32_t *workers_to_spawn)
+uint32_t _server_spawn_worker(uint32_t (*orig_func)(void *), char *funcname, void *args)
 { 
-    // a new worker can only be spawned if
-    // 1) current process if the parent process
-    // 2) doing so won't spawn more workers than asked for
-#define CAN_SPAWN (is_parent && *workers_to_spawn > 0)
+	static int invo = 0;
 
-    // use the first byte as control byte
-    // and the rest as lib_path
-    char msg[LIBPATH_MAX_LEN+1]; 
+	int can_spawn = 0;
+	invo++;
+	if (is_parent) {
+		uint32_t i;
+		for (i = 0; i < _server_num_invos; i++)
+			if (_server_invos[i] == invo) {
+				can_spawn = 1;
+				break;
+			}
+	}
+
+    char msg[LIBPATH_MAX_LEN]; 
     memset(msg, 0, sizeof msg);
 
     char sock_path[100] = "/tmp/tuning-XXXXXX";
-    if (CAN_SPAWN) {
+    if (can_spawn) {
         mkdtemp(sock_path);
         strcat(sock_path, "/socket");
     }
     
-    if (CAN_SPAWN && fork()) { // body of worker process
+    if (can_spawn && fork()) { // body of worker process
         is_parent = 0;
 
-        daemon(1, 0);
+        //daemon(1, 0);
         struct sockaddr_un addr;
         int sockfd;
 
@@ -119,7 +124,9 @@ void _server_spawn_worker(
                 continue;
             }
 
-            read(cli_fd, msg, LIBPATH_MAX_LEN);
+            if (read(cli_fd, msg, LIBPATH_MAX_LEN) <= 0) {
+				continue;
+			}
 
             // read control byte and see if needs to kill current worker
             if (msg[0] == KILL) {
@@ -128,10 +135,8 @@ void _server_spawn_worker(
             }
 
             if (fork()) { 
-                char *lib_path = &msg[1];
-
                 // lookup the function from shared library
-                void *lib = dlopen(lib_path, RTLD_NOW);
+                void *lib = dlopen(msg, RTLD_NOW);
                 if (!lib) respond(cli_fd, make_error(CANT_LOAD_LIB));
 
                 void *(*func)(void *) = dlsym(lib, funcname); 
@@ -154,13 +159,11 @@ void _server_spawn_worker(
         unlink(sock_path);
         exit(0);
     } else { // body of parent process 
-        if (CAN_SPAWN) {
-            *workers_to_spawn -= 1;
-            dump_worker_data(funcname, sock_path);
+        if (can_spawn) {
+            dump_worker_data(sock_path);
         }
-        orig_func(args); 
+        return orig_func(args); 
     }
-#undef CAN_SPAWN
 }
 
 void _server_init()
@@ -176,10 +179,5 @@ void _server_init()
         }
     }
 
-    out_file = fopen(OUT_FILENAME, "wb");
-}
-
-void _server_shutdown()
-{
-    fclose(out_file);
+	remove(OUT_FILENAME);
 }
