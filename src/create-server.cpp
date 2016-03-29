@@ -21,12 +21,8 @@
 #include <llvm/Support/raw_ostream.h>
 
 #include <vector>
-#include <algorithm>
 #include <map>
 #include <string>
-
-// TODO
-// deal with internal and private linkage by creating and inserting calls to setters of global variable
 
 using namespace llvm;
 
@@ -42,68 +38,51 @@ OutputFilename(
     cl::desc("Specify output file name"), 
     cl::value_desc("output file"));
 
-cl::opt<std::uint32_t>
-MaxWorkers(
-    "w",
-    cl::desc("maximum number of workers to spawn per function"),
-    cl::value_desc("worker count"),
-    cl::init(1));
-
-cl::list<std::string>
-FunctionsToFune(
+cl::opt<std::string>
+FunctionToRun(
     "f",
-    cl::desc("functions to tune"),
+    cl::desc("functions to run"),
     cl::value_desc("function"),
-    cl::OneOrMore, cl::Prefix);
+    cl::Required, cl::Prefix);
+
+cl::list<int>
+Invos(
+  "inv",
+  cl::desc("invocation you want to run"),
+  cl::value_desc("invocation"),
+  cl::OneOrMore, cl::Prefix);
 
 // replace a call instruction with an equivalent call to `_server_spawn_worker`
 // return the replaced call
-CallInst *emit_spawn_worker(CallInst *Call, Function *SpawnFn, Type *FuncTy)
+CallInst *replaceCallWithSpawn(CallInst *Call, Value *SpawnFn, Type *FuncTy)
 {
   Function *F = Call->getCalledFunction();
   if (!F) return Call;
 
   std::string FnName = F->getName();
-  if (std::find(FunctionsToFune.begin(), FunctionsToFune.end(), FnName) ==
-      FunctionsToFune.end())
-    return Call;
 
-  Module *M = SpawnFn->getParent();
+  Module *M = F->getParent();
   LLVMContext &Ctx = M->getContext();
 
   // declare global variable that refers to this function's name
   Constant *Str = ConstantDataArray::getString(Ctx, FnName);
   GlobalVariable *GV = new GlobalVariable(*M, Str->getType(),
       true, GlobalValue::PrivateLinkage,
-      Str, "tuning-server.fn", nullptr,
+      Str, "server.fn-name", nullptr,
       GlobalVariable::NotThreadLocal,
       0);
   Constant *Zero = ConstantInt::get(Type::getInt32Ty(Ctx), 0);
   std::vector<Constant *> Idxs = {Zero, Zero};
   Constant *FnNamePtr = ConstantExpr::getInBoundsGetElementPtr(Str->getType(), GV, Idxs); 
 
-  // declare global variable to hold counter for this call site
-  static std::map<std::string, GlobalVariable *> Counters;
-  GlobalVariable *Counter = Counters[FnName]; 
-  if (!Counter) {
-    Type *I32Ty = Type::getInt32Ty(Ctx);
-    Constant *CounterInit = ConstantInt::get(I32Ty,
-        MaxWorkers);
-    Counters[FnName] = Counter = new GlobalVariable(*M, I32Ty,
-        false, GlobalValue::PrivateLinkage,
-        CounterInit, "tuning-server.worker-count", nullptr,
-        GlobalVariable::NotThreadLocal,
-        0); 
-  }
-
   // replace `call func(args)` with
-  // `call _server_spawn_worker(func, func-name, args, counter) 
+  // `call _server_spawn_worker(func, func_name, args)
   BitCastInst *Arg = new BitCastInst(
       Call->getArgOperand(0),
       Type::getInt8PtrTy(Ctx),
       "",
       Call);
-  BitCastInst *FuncPtr= new BitCastInst(
+  BitCastInst *FuncPtr = new BitCastInst(
       F,
       FuncTy->getPointerTo(),
       "",
@@ -111,15 +90,10 @@ CallInst *emit_spawn_worker(CallInst *Call, Function *SpawnFn, Type *FuncTy)
   std::vector<Value *> Args = {
     FuncPtr,
     FnNamePtr, 
-    Arg,
-    Counter
+    Arg
   };
-  CallInst *CallToWorker = CallInst::Create(
-      SpawnFn,
-      Args,
-      "",
-      Call);
-  Call->removeFromParent();
+  CallInst *CallToWorker = CallInst::Create(SpawnFn, Args, "", Call);
+  Call->replaceAllUsesWith(CallToWorker);
 
   return CallToWorker;
 }
@@ -128,8 +102,29 @@ void create_server(Module &M)
 {
   LLVMContext &Ctx = M.getContext();
   Type *I8PtrTy = Type::getInt8PtrTy(Ctx);
-  Type *VoidTy = Type::getVoidTy(Ctx);
-  Type *I32PtrTy = Type::getInt32PtrTy(Ctx);
+
+  Type *Int32Ty = Type::getInt32Ty(Ctx);
+
+  // declare _server_num_invos
+  new GlobalVariable(M,
+      Int32Ty,
+      true, GlobalValue::ExternalLinkage,
+      ConstantInt::get(Int32Ty, Invos.size()), "_server_num_invos", nullptr,
+      GlobalVariable::NotThreadLocal,
+      0); 
+
+  // decalre _server_invos 
+  std::vector<Constant *> InvosContent;
+  InvosContent.resize(Invos.size());
+  for (int i = 0, e = Invos.size(); i != e; i++)
+    InvosContent[i] = ConstantInt::get(Int32Ty, Invos[i]);
+  ArrayType *InvosTy = ArrayType::get(Int32Ty, Invos.size());
+  new GlobalVariable(M,
+                     InvosTy,
+                     true, GlobalValue::ExternalLinkage,
+                     ConstantArray::get(InvosTy, InvosContent), "_server_invos", nullptr,
+                     GlobalVariable::NotThreadLocal,
+                     0);
   
   // declare
   // `void _server_spawn_worker(
@@ -138,15 +133,14 @@ void create_server(Module &M)
   //      void *args,
   //      uint32_t workers_to_spawn)`
   std::vector<Type *> GenericArgs = { I8PtrTy };
-  FunctionType *GenericFnTy = FunctionType::get(VoidTy, GenericArgs, false);
+  FunctionType *GenericFnTy = FunctionType::get(Int32Ty, GenericArgs, false);
   std::vector<Type *> SpawnArgs = {
     GenericFnTy->getPointerTo(),
     I8PtrTy,
-    I8PtrTy,
-    I32PtrTy
+    I8PtrTy
   };
   Function *SpawnFn = Function::Create(
-      FunctionType::get(VoidTy, SpawnArgs, false),
+      FunctionType::get(Int32Ty, SpawnArgs, false),
       Function::ExternalLinkage,
       "_server_spawn_worker",
       &M);
@@ -157,8 +151,15 @@ void create_server(Module &M)
     for (BasicBlock &BB : F) {
       for (BasicBlock::iterator I = BB.begin(); I != BB.end(); ++I) {
         CallInst *Call = dyn_cast<CallInst>(&*I);
-        if (Call) {
-          I = emit_spawn_worker(Call, SpawnFn, GenericFnTy);
+        if (Call && Call->getCalledFunction()->getName() == FunctionToRun) {
+          Type *RetTy = Call->getFunctionType()->getReturnType();
+          // cast _server_spawn_worker's return type to whatever `Call` returns
+          auto *SpawnTy = FunctionType::get(RetTy, SpawnFn->getFunctionType()->params(), false)->getPointerTo();
+          I = replaceCallWithSpawn(Call,
+                                   new BitCastInst(SpawnFn, SpawnTy, "", Call),
+                                   GenericFnTy);
+          Call->eraseFromParent();
+          return;
         }
       }
     }
