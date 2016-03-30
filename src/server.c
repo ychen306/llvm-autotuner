@@ -98,7 +98,7 @@ uint32_t _server_spawn_worker(uint32_t (*orig_func)(void *), char *funcname, voi
     if (can_spawn && fork()) { // body of worker process
         is_parent = 0;
 
-        //daemon(1, 0);
+        daemon(1, 0);
         struct sockaddr_un addr;
         int sockfd;
 
