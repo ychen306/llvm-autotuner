@@ -134,9 +134,11 @@ INITIALIZE_PASS_END(LoopExtractor, "", "", true, true)
 
 
 static std::vector<GlobalValue *> ExtractedLoops;
+static std::vector<LoopHeader> Headers;
+static std::map<std::string, std::string> Renaming;
+
 // mapping <extracted loop> -> <names of functions that needs to be copied and extracted together with the map>
 static std::map<std::string, std::vector<std::string>> Called;
-
 
 // read meta data of the call graph node
 std::vector<LoopHeader> readGraphNodeMeta()
@@ -229,6 +231,7 @@ bool LoopExtractor::runOnModule(Module &M)
       Extracted->setVisibility(GlobalValue::DefaultVisibility);
       Extracted->setLinkage(GlobalValue::ExternalLinkage);
       ExtractedLoops.push_back(Extracted);
+      Headers.push_back(Header);
 
       unsigned CallerIdx;
       for (unsigned i = 0, e = CGNodes.size(); i != e; i++) {
@@ -266,7 +269,9 @@ std::vector<GlobalValue *> getCalledFuncs(Module *M, Function *Caller)
 {
   std::vector<GlobalValue *> Funcs;
   for (auto &CalleeName : Called[Caller->getName()]) {
-    Funcs.push_back(M->getFunction(CalleeName));
+	  auto *F = M->getFunction(CalleeName);
+	  if (!F) F = M->getFunction(Renaming[CalleeName]);
+    Funcs.push_back(F);
   }
 
   return Funcs;
@@ -281,16 +286,18 @@ void externalizeSymbol(GlobalValue &G)
 {
   char FilePath[PATH_MAX];
   realpath(InputFilename.c_str(), FilePath);
-    if (G.hasHiddenVisibility() || G.hasInternalLinkage() || G.hasPrivateLinkage()) {
-      G.setName(std::string("autotuner.internals.")+FilePath+"."+G.getName());
-      G.setVisibility(GlobalValue::DefaultVisibility);
-      G.setLinkage(GlobalValue::ExternalLinkage);
-    }
+  if (G.hasHiddenVisibility() || G.hasInternalLinkage() || G.hasPrivateLinkage()) {
+	  auto NewName = std::string("autotuner.internals.")+FilePath+"."+G.getName().str();
+	  Renaming[G.getName().str()] = NewName;
+	  G.setName(NewName);
+	  G.setVisibility(GlobalValue::DefaultVisibility);
+	  G.setLinkage(GlobalValue::ExternalLinkage);
+  }
 }
 
 // change internal non-constant globals to external and rename to avoid name-conflict
 void externalize(Module &M)
-{ 
+{
   for (GlobalVariable &G : M.globals()) {
     externalizeSymbol(G);
   }
@@ -346,7 +353,10 @@ int main(int argc, char **argv)
 
   // now remove everything in a new module except
   // the extracted loop and its callees (which will also be internalized)
-  for (GlobalValue *Extracted : ExtractedLoops) {
+  for (unsigned i = 0, e = ExtractedLoops.size(); i != e; i++) {
+    GlobalValue *Extracted = ExtractedLoops[i];
+    LoopHeader &Header = Headers[i];
+
     Module *NewModule = CloneModule(CopiedModule);
     std::string ExtractedName = Extracted->getName();
     Function *ExtractedF = NewModule->getFunction(ExtractedName);
@@ -355,8 +365,11 @@ int main(int argc, char **argv)
 
     std::string BitcodeFName = newFileName();
 
-    // report name of extracted function
-    ExtractedList << ExtractedName << '\t' << BitcodeFName << '\n';
+    // report which loop was in which bitcode file
+    ExtractedList << ExtractedName
+      << '\t' << Header.Function
+      << '\t' << Header.HeaderId
+      << '\t' << BitcodeFName << '\n';
 
     tool_output_file ExtractedOut(BitcodeFName, EC, sys::fs::F_None);
     if (EC) {
