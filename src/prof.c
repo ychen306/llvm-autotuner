@@ -163,7 +163,7 @@ void _prof_init()
 	
 	srand(time(NULL));
 	create_profiles();
-	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
+	clock_gettime(CLOCK_MONOTONIC, &begin);
 	setup_timer();
 }
 
@@ -200,12 +200,13 @@ void _prof_dump()
 		} while (num_read < _prof_num_loops);
 		collect_sample(buf);
 	} 
+	printf("!!!!!!!! samples = %zu\n", num_sampled);
 	free(buf);
 	fclose(dump);
 
 	// time the process in ms
 	struct timespec end;
-	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
+	clock_gettime(CLOCK_MONOTONIC, &end);
 	long long int elapsed = (end.tv_sec - begin.tv_sec)*1e3 +
 		(end.tv_nsec - begin.tv_nsec) / 1e6;
 

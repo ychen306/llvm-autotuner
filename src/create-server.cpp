@@ -127,7 +127,7 @@ void create_server(Module &M)
                      0);
   
   // declare
-  // `void _server_spawn_worker(
+  // `uint32_t _server_spawn_worker(
   //      void *(*orig_func)(void *),
   //      char *func_name,
   //      void *args,
