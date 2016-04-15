@@ -50,11 +50,12 @@ static module_desc* get_new_desc_list_node()
     exit(1);
   }
   if (module_desc_list_tail == NULL)
-    module_desc_list_head = module_desc_list_tail = new_entry;
+    module_desc_list_head = new_entry;
   else {
     assert(module_desc_list_tail->next == NULL && "Incorrect list tail");
     module_desc_list_tail->next = new_entry;
   }
+  module_desc_list_tail = new_entry;
   return new_entry;
 }
 
