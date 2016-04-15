@@ -1,18 +1,22 @@
 LIBS = support irreader ipo bitwriter bitreader
-LDFLAGS = $(shell llvm-config --ldflags --system-libs --libs $(LIBS))
-CXXFLAGS = $(shell llvm-config --cxxflags) -g
-CXX = clang++
-CC = clang
+CONFIG = llvm-config
+CXX    = clang++
+CC     = clang
+LDFLAGS = $(shell $(CONFIG) --ldflags --system-libs --libs $(LIBS))
+CXXFLAGS = $(shell $(CONFIG) --cxxflags) -O0 -g
+CCFLAGS = $(shell $(CONFIG) --cflags) -O0 -g
 SRC_DIR = src
 BIN_DIR = bin
 OBJ_DIR = obj
 TOOLS = extract-loops instrument-loops create-server combine
-BC = prof.bc server.bc
+NATIVE_OBJS = prof.o
+BC_OBJS = prof.bc server.bc
 
 EXES = $(TOOLS:%=$(BIN_DIR)/%)
-OBJS = $(BC:%=$(OBJ_DIR)/%)
+OBJS = $(BC_OBJS:%=$(OBJ_DIR)/%) $(NATIVE_OBJS:%=$(OBJ_DIR)/%)
 
 .PHONY: all clean build_obj build_exe
+.PRECIOUS: %.o %.bc
 
 all: build_obj build_exe
 
@@ -25,12 +29,16 @@ build_obj:
 	$(MAKE) $(OBJS)
 
 obj/%.bc: $(SRC_DIR)/%.c $(SRC_DIR)/common.h
-	$(CC) -O3 -c -emit-llvm $^ -o $@
+	$(CC) -O0 -c -emit-llvm $^
+	mv -f $(@F) obj/
 
-%.o: $(SRC_DIR)/%.cpp
+obj/%.o: $(SRC_DIR)/%.c
+	$(CC) $^ $(CCFLAGS) -c -o $@
+
+obj/%.o: $(SRC_DIR)/%.cpp
 	$(CXX) $^ $(CXXFLAGS) -c -o $@
 
-bin/%: %.o
+bin/%: obj/%.o
 	$(CXX) $^ $(LDFLAGS) -o $@
 
 clean:

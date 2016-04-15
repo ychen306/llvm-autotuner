@@ -2,6 +2,7 @@
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/IRReader/IRReader.h>
 #include <llvm/Transforms/Scalar.h>
+#include <llvm/Transforms/Utils/ModuleUtils.h>
 #include <llvm/ADT/Twine.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/IR/LegacyPassManager.h>
@@ -28,6 +29,7 @@
 #include <vector>
 #include <set>
 #include <utility>
+#include <initializer_list>
 
 using namespace llvm;
 
@@ -84,7 +86,7 @@ struct LoopInstrumentation : public ModulePass {
   Constant *getLoopProfileInitializer(Constant *Fn, unsigned Id);
 
   // declare and initialize data for profiler
-  void initGlobals(std::vector<Constant *> &);
+  Function* initGlobals(std::vector<Constant *> &);
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<LoopInfoWrapperPass>();
@@ -105,7 +107,8 @@ void LoopInstrumentation::instrumentExit(BasicBlock *Exit, Value *RunningAddr, b
 {
   LLVMContext &Ctx = CurModule->getContext();
   Type *Int32Ty = Type::getInt32Ty(Ctx);
-  GlobalVariable *LoopEntryAddr = CurModule->getGlobalVariable("_prof_entry");
+  GlobalVariable *LoopEntryAddr = CurModule->getGlobalVariable("_prof_entry",
+						/*AllowInternal*/true);
 
   // insert in the beginning of the exit block
   auto Builder = Exclusive ? createFrontBuilder(Exit) : IRBuilder<>(Exit, Exit->getTerminator());
@@ -128,9 +131,12 @@ Value *LoopInstrumentation::instrumentEntry(BasicBlock *Entry, unsigned Idx, boo
   Type *Int32Ty = Type::getInt32Ty(Ctx),
        *Int64Ty = Type::getInt64Ty(Ctx);
 
-  GlobalVariable *Profiles = CurModule->getGlobalVariable("_prof_loops"),
-                 *RunningArr = CurModule->getGlobalVariable("_prof_loops_running"),
-                 *LoopEntryAddr = CurModule->getGlobalVariable("_prof_entry");
+  GlobalVariable *Profiles = CurModule->getGlobalVariable("_prof_loops",
+						/*AllowInternal*/true);
+  GlobalVariable *RunningArr=CurModule->getGlobalVariable("_prof_loops_running",
+						/*AllowInternal*/true);
+  GlobalVariable *LoopEntryAddr=CurModule->getGlobalVariable("_prof_entry",
+						/*AllowInternal*/true);
 
   auto Builder = Exclusive ?
     IRBuilder<>(Entry, Entry->getTerminator()) :
@@ -188,7 +194,7 @@ void LoopInstrumentation::instrumentLoop(unsigned Idx, Loop *L)
   }
 }
 
-void LoopInstrumentation::initGlobals(std::vector<Constant *> &LoopProfiles)
+Function* LoopInstrumentation::initGlobals(std::vector<Constant *> &LoopProfiles)
 { 
   LLVMContext &Ctx = CurModule->getContext();
   unsigned NumLoops = LoopProfiles.size();
@@ -198,30 +204,65 @@ void LoopInstrumentation::initGlobals(std::vector<Constant *> &LoopProfiles)
   // declare `_prof_loops`
   ProfileArrTy = ArrayType::get(LoopProfileTy, NumLoops);
   Constant *ArrContent = ConstantArray::get(ProfileArrTy, LoopProfiles);
-  new GlobalVariable(*CurModule,
+  GlobalVariable* Prof_Loops_GVar =
+    new GlobalVariable(*CurModule,
                      ProfileArrTy,
-                     false, GlobalValue::ExternalLinkage,
+                     false, GlobalValue::PrivateLinkage,
                      ArrContent, "_prof_loops", nullptr,
                      GlobalVariable::NotThreadLocal,
                      0);
 
   RunningArrTy = ArrayType::get(Int32Ty, NumLoops);
   // declare `_prof_loops_running` 
-  new GlobalVariable(*CurModule,
+  GlobalVariable* Prof_Loops_Running_GVar =
+    new GlobalVariable(*CurModule,
       RunningArrTy,
-      false, GlobalValue::ExternalLinkage,
+      false, GlobalValue::PrivateLinkage,
       ConstantAggregateZero::get(RunningArrTy), "_prof_loops_running", nullptr,
       GlobalVariable::NotThreadLocal,
       0);
 
   // also define `_prof_num_loop`
   Constant *NumLoop = ConstantInt::get(Int32Ty, NumLoops, true);
-  new GlobalVariable(*CurModule,
+  GlobalVariable *Prof_Num_Loops_GVar =
+    new GlobalVariable(*CurModule,
       Int32Ty,
-      true, GlobalValue::ExternalLinkage,
+      true, GlobalValue::PrivateLinkage,
       NumLoop, "_prof_num_loops", nullptr,
       GlobalVariable::NotThreadLocal,
-      0); 
+      0);
+
+  // Declare external function used to register global variables used
+  // per module
+  const std::string extFuncName = "add_module_desc";
+  assert(CurModule->getNamedValue(extFuncName) == NULL &&
+	 "External function `add_module_desc' is in module already?");
+  Constant *descFuncDecl = CurModule->getOrInsertFunction(extFuncName,
+				Type::getVoidTy(Ctx), /* return type */
+				Type::getInt32PtrTy(Ctx),
+				PointerType::get(LoopProfileTy, 0),
+				Type::getInt32PtrTy(Ctx),
+				nullptr);
+
+  // Create a function to call the declaration function
+  FunctionType* newFType = FunctionType::get(Type::getVoidTy(Ctx),
+					     /*isVarArg*/ false);
+  Function* newF = Function::Create(newFType, GlobalValue::InternalLinkage,
+				    "callAddModuleDesc", CurModule);
+  BasicBlock* entryBlock = BasicBlock::Create(Ctx, "", newF);
+  IRBuilder<> IRB(entryBlock);
+  ArrayRef<Value*> arrayRefList = { /* std::initializer_list for ArrayRef */
+    Prof_Num_Loops_GVar,
+    IRB.CreateBitCast(Prof_Loops_GVar, PointerType::get(LoopProfileTy, 0)),
+    IRB.CreateBitCast(Prof_Loops_Running_GVar, Type::getInt32PtrTy(Ctx)) };
+  IRB.CreateCall(descFuncDecl, arrayRefList);
+  IRB.CreateRetVoid();
+
+  // And append the new function to the global ctors list so it gets called
+  llvm::appendToGlobalCtors(*CurModule, newF, 65535);
+
+  // Return the newly created function so it isn't instrumented!
+  return newF;
 }
 
 char LoopInstrumentation::ID = 1;
@@ -268,10 +309,10 @@ bool LoopInstrumentation::runOnModule(Module &M)
   LoopProfileTy->setBody(Fields);
 
   Type *Int32Ty = Type::getInt32Ty(Ctx);
-  // declare `_prof_entry`
+  // Declare `_prof_entry`: it is private to each module
   new GlobalVariable(*CurModule, 
       Int32Ty,
-      false, GlobalValue::ExternalLinkage,
+      false, GlobalValue::LinkOnceODRLinkage,
       ConstantInt::get(Int32Ty, 0), "_prof_entry", nullptr,
       GlobalVariable::NotThreadLocal,
       0);
@@ -314,13 +355,17 @@ bool LoopInstrumentation::runOnModule(Module &M)
     }
   }
 
-  initGlobals(LoopProfiles); 
-
+  // Create the global variables and the function to register them.
+  // Get the function pointer so we don't instrument it!
+  Function* regFunc = initGlobals(LoopProfiles); 
 
   // insert code in the entry and exit blocks of a function/loop
   for (Function &F : M.getFunctionList()) {
-    // external function
+    // skip external functions
     if (F.empty()) continue;
+
+    // skip the registration function
+    if (&F == regFunc) continue;
 
     LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(F).getLoopInfo();
 
@@ -328,7 +373,7 @@ bool LoopInstrumentation::runOnModule(Module &M)
 
     // instrument returning blocks of `F`
     for (BasicBlock &BB : F) {
-      if (isa<ReturnInst>(BB.getTerminator())) {
+      if (BB.getTerminator() != NULL && isa<ReturnInst>(BB.getTerminator())) {
         instrumentExit(&BB, FnRunningAddr, false);
       }
     }
