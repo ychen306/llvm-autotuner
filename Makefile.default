@@ -1,7 +1,7 @@
 LIBS = support irreader ipo bitwriter bitreader
-CONFIG = /home/vadve/llvm-x86/bin/llvm-config
-CXX    = /home/vadve/llvm-x86/bin/clang++
-CC     = /home/vadve/llvm-x86/bin/clang
+CONFIG = llvm-config
+CXX    = clang++
+CC     = clang
 LDFLAGS = $(shell $(CONFIG) --ldflags --system-libs --libs $(LIBS))
 CXXFLAGS = $(shell $(CONFIG) --cxxflags) -O0 -g
 CCFLAGS = $(shell $(CONFIG) --cflags) -O0 -g
