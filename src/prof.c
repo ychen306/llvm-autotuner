@@ -7,6 +7,7 @@
 #include <string.h>
 #include <math.h>
 #include <assert.h>
+#include <errno.h>
 
 #include "common.h"
 
@@ -17,28 +18,67 @@
 // sample every 100 us
 #define SAMPLING_INTERVAL 100
 
-#define SAMPLE_SIZE ((sizeof (uint32_t)) * _prof_num_loops)
+static uint32_t _prof_num_loops_tot = 0;
 
 void _prof_init() __attribute__ ((constructor));
 void _prof_dump() __attribute__ ((destructor));
 
+// Profile data about a single loop
 struct loop_data { 
 	char *func;
 	int32_t header_id; // > 0 if it's loop, = 0 if it's a function
 	int64_t runs;
 };
 
-extern uint32_t _prof_num_loops;
+// Create a linked list of descriptors, one per linked module.
+// 
+typedef struct module_desc_t {
+  uint32_t _prof_num_loops;
+  struct loop_data* _prof_loops_p;
+  uint32_t* _prof_loops_running_p;
+  struct module_desc_t* next;
+} module_desc;
 
-extern struct loop_data _prof_loops[];
+module_desc* module_desc_list_head = NULL;
+module_desc* module_desc_list_tail = NULL;
 
-extern uint32_t _prof_loops_running[];
+static module_desc* get_new_desc_list_node()
+{
+  module_desc* new_entry = calloc(1, sizeof(module_desc));
+  if (new_entry == NULL) {
+    perror("append_new_desc_list_node(): ");
+    exit(1);
+  }
+  if (module_desc_list_tail == NULL)
+    module_desc_list_head = module_desc_list_tail = new_entry;
+  else {
+    assert(module_desc_list_tail->next == NULL && "Incorrect list tail");
+    module_desc_list_tail->next = new_entry;
+  }
+  return new_entry;
+}
 
-extern int32_t _prof_entry;
+void add_module_desc(int32_t* _numloops,
+		     struct loop_data* _p_l,
+		     int32_t* _p_l_r)
+{
+  int32_t numloops = *_numloops;
+  assert(numloops >= 0 && "Unexpected negative value for _numloops");
+  _prof_num_loops_tot += (uint32_t) numloops;
+  
+  module_desc* new_entry = get_new_desc_list_node();
+  new_entry->_prof_num_loops = (uint32_t) numloops;
+  new_entry->_prof_loops_p = _p_l;
+  new_entry->_prof_loops_running_p = (uint32_t*) _p_l_r;
+  new_entry->next = NULL;
+#ifndef NDEBUG
+  printf("Registering one module desc!\n");
+#endif
+}
 
 static struct timespec begin;
 
-FILE *dump;
+FILE *dumpfile;
 size_t num_sampled;
 
 struct fraction { 
@@ -58,7 +98,7 @@ static profile_t *profiles;
 
 static inline float frac2num(struct fraction *frac)
 { 
-	return ((float) frac->a) / frac->b;
+return ((float) frac->a) / frac->b;
 }
 
 // record that `caller` called `called_idx`
@@ -75,12 +115,18 @@ static inline void record_miss(profile_t caller, size_t callee_idx)
 	caller[callee_idx].b++;
 }
 
+// Allocate an NxN array of fraction objects, where N = _prof_num_loops_tot
+// Initialize each one to zero by using calloc.
+//
 static void create_profiles()
 {
-	profiles = malloc(sizeof (profile_t) * _prof_num_loops);
+        if (_prof_num_loops_tot == 0)
+                return;
+	profiles = malloc(sizeof (profile_t) * _prof_num_loops_tot);
 	size_t i;
-	for (i = 0; i < _prof_num_loops; i++) {
-		profiles[i] = calloc(_prof_num_loops, sizeof (struct fraction));
+	for (i = 0; i < _prof_num_loops_tot; i++) {
+		profiles[i] = calloc(_prof_num_loops_tot,
+				     sizeof(struct fraction));
 	}
 }
 
@@ -117,15 +163,19 @@ static void setup_timer()
 	setitimer(ITIMER_PROF, &timerspec, NULL);
 }
 
-static void collect_sample(uint32_t *running_instance)
-{ 
-	// update profiles of all the loops given a new sample
+// running_instance[] is an array of integers recording which loops were
+// running at the time of the sample.  Use those to accumulate an NxN
+// matrix of profile entries, where profiles[i][j] is for loops i and j,
+// and each profile entry is as defined above.
+// 
+static void collect_sample_impl(uint32_t *running_instance)
+{
 	size_t i, j;
-	for (i = 0; i < _prof_num_loops; i++) {
+	for (i = 0; i < _prof_num_loops_tot; i++) {
 		if (running_instance[i]) record_hit(profiles[i], i);
 		else record_miss(profiles[i], i);
 
-		for (j = i+1; j < _prof_num_loops; j++) { 
+		for (j = i+1; j < _prof_num_loops_tot; j++) { 
 			if (running_instance[i] && running_instance[j]) { 
 				if (running_instance[i] < running_instance[j]) {
 					// i called j 
@@ -145,68 +195,85 @@ static void collect_sample(uint32_t *running_instance)
 	}
 }
 
-static void dump_sample(int signo)
+static void collect_sample(uint32_t *running_instance)
+{ 
+        // Nothing to do if there are zero loops
+        if (_prof_num_loops_tot == 0) return;
+
+        // Otherwise, if this is the first sample, allocate the profiles array
+        if (profiles == NULL) create_profiles();
+
+// Debug infinite loop
+static int inCollect = 0;
+printf("In collect_sample %d\n", ++inCollect);
+	
+	// update profiles of all the loops given a new sample
+	collect_sample_impl(running_instance);
+}
+
+// Sample what loops and functions are running and write sample data to a file
+static int dump_one_sample(module_desc* desc)
 {
-	assert(_prof_entry >= 0);
-	num_sampled++;
+	// Write the sample data for each module
 	size_t num_written = 0;
 	do {
-		ssize_t bytes = fwrite(_prof_loops_running+num_written, sizeof (uint32_t), _prof_num_loops-num_written, dump);
+		ssize_t bytes = fwrite(desc->_prof_loops_running_p+num_written, sizeof (uint32_t), desc->_prof_num_loops-num_written, dumpfile);
 		num_written += bytes;
-	} while (num_written < _prof_num_loops);
-	setup_timer();
+	} while (num_written < desc->_prof_num_loops);
+	return num_written;
+}
+
+// Sample what loops and functions are running and write sample data to a file
+static void dump_sample(int signo)
+{
+  for (module_desc *desc= module_desc_list_head; desc !=NULL; desc=desc->next) {
+    size_t num_written = dump_one_sample(desc);
+    assert(num_written == desc->_prof_num_loops && "Invalid dump");
+  }
+  num_sampled++;
+  setup_timer();
 }
 
 void _prof_init() 
 { 
-	dump = fopen(PROF_DUMP, "w+");
+	dumpfile = fopen(PROF_DUMP, "w+");
 	
 	srand(time(NULL));
-	create_profiles();
-	clock_gettime(CLOCK_MONOTONIC, &begin);
+	//create_profiles();
+	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
 	setup_timer();
-}
-
-void verify()
-{
-	assert(_prof_entry == 0);
-
-	uint32_t i;
-	for (i = 0; i < _prof_num_loops; i++) {
-		assert(_prof_loops_running[i] == 0 && "un-existed loop");
-	}
 }
 
 void _prof_dump()
 { 
-	size_t i, j;
-
 	// disarm timer
 	struct itimerval timerspec;
 	memset(&timerspec, 0, sizeof timerspec);
 	setitimer(SIGPROF, &timerspec, NULL);
 	signal(SIGPROF, SIG_IGN);
 
-	verify();
-
 	// read sample from the dump
-	uint32_t *buf = malloc(sizeof (uint32_t) * _prof_num_loops);
-	rewind(dump);
-	for (i = 0; i < num_sampled; i++) {
+	uint32_t *buf = malloc(sizeof (uint32_t) * _prof_num_loops_tot);
+	fflush(dumpfile);
+	rewind(dumpfile);
+	for (size_t i = 0, N = num_sampled; i < N; i++) {
 		size_t num_read = 0;
 		do {
-			size_t bytes = fread(buf+num_read, sizeof (uint32_t), _prof_num_loops-num_read, dump); 
-			num_read +=  bytes;
-		} while (num_read < _prof_num_loops);
+			size_t n = fread(buf+num_read, sizeof (uint32_t), _prof_num_loops_tot-num_read, dumpfile); 
+			num_read += n;
+			if (feof(dumpfile) && num_read < _prof_num_loops_tot) {
+			  perror("Unexpected EOF in dump file");
+			  assert(0);
+			}
+		} while (num_read < _prof_num_loops_tot);
 		collect_sample(buf);
-	} 
-	printf("!!!!!!!! samples = %zu\n", num_sampled);
+	}
 	free(buf);
-	fclose(dump);
+	fclose(dumpfile);
 
 	// time the process in ms
 	struct timespec end;
-	clock_gettime(CLOCK_MONOTONIC, &end);
+	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
 	long long int elapsed = (end.tv_sec - begin.tv_sec)*1e3 +
 		(end.tv_nsec - begin.tv_nsec) / 1e6;
 
@@ -214,23 +281,29 @@ void _prof_dump()
 		 *graph_out = fopen(PROF_GRAPH_OUT, "wb");
 
 	fprintf(flat_out, "function,header-id,runs,time(pct),time(ms)\n");
-	for (i = 0; i < _prof_num_loops; i++) { 
-		struct loop_data *loop = &_prof_loops[i];
-		float pct = frac2num(&profiles[i][i]); 
-		fprintf(flat_out, "%s,%d,%lld,%.4f,%.4f\n",
+	uint32_t loop_idx = 0;
+	for (module_desc *desc = module_desc_list_head; desc != NULL;
+	     desc= desc->next) {
+	   struct loop_data* prof_loops = desc->_prof_loops_p;
+	   for (uint32_t i = 0; i < desc->_prof_num_loops; i++) { 
+		struct loop_data *loop = &prof_loops[i];
+		float pct = frac2num(&profiles[loop_idx][loop_idx]);
+		fprintf(flat_out, "%s,%d,%ld,%.4f,%.4f\n",
 				loop->func,
 				loop->header_id,
 				loop->runs,
 				100*pct,
 				elapsed*pct);
+	        ++loop_idx;
+	  }
 	}
 
-	for (i = 0; i < _prof_num_loops; i++) {
-		for (j = 0; j < _prof_num_loops; j++) {
+	for (size_t i = 0; i < _prof_num_loops_tot; i++) {
+		for (size_t j = 0; j < _prof_num_loops_tot; j++) {
 			if (i == j) fprintf(graph_out, "-1");
 			else fprintf(graph_out, "%.4f", frac2num(&profiles[i][j]) * 100);
 
-			if (j != _prof_num_loops-1) fprintf(graph_out, "\t");
+			if (j != _prof_num_loops_tot-1) fprintf(graph_out,"\t");
 		}
 		fprintf(graph_out, "\n");
 	}
