@@ -246,19 +246,14 @@ static int fwriteall(void *buf, size_t size, FILE *f) {
 }
 
 // Sample what loops and functions are running and write sample data to a file
-static void dump_one_sample(module_desc *desc) {
+static void dump_one_sample(module_desc *desc, uint32_t global_idx) {
   // Write the sample data for each module
-  /*
-  int success = fwriteall(desc->_prof_loops_running_p, desc->_prof_num_loops *
-  sizeof(uint32_t),
-                  dumpfile);
-                  */
   uint32_t i;
-  for (i = 0; i < desc->_prof_num_loops; i++) {
+  for (i = 0; i < desc->_prof_num_loops; i++, global_idx++) {
     if (desc->_prof_loops_running_p[i] == 0)
       continue;
 
-    fwriteall(&i, sizeof(uint32_t), dumpfile);
+    fwriteall(&global_idx, sizeof(uint32_t), dumpfile);
     fwriteall(desc->_prof_loops_p + i, sizeof(uint32_t), dumpfile);
     dumpsize += sizeof(uint32_t) * 2;
   }
@@ -266,9 +261,11 @@ static void dump_one_sample(module_desc *desc) {
 
 // Sample what loops and functions are running and write sample data to a file
 static void dump_sample(int signo) {
+  uint32_t global_idx = 0;
   for (module_desc *desc = module_desc_list_head; desc != NULL;
        desc = desc->next) {
-    dump_one_sample(desc);
+    dump_one_sample(desc, global_idx);
+    global_idx += desc->_prof_num_loops;
   }
 
   // write a token to signify end of the row

@@ -192,10 +192,16 @@ bool LoopExtractor::runOnModule(Module &M)
 
   std::vector<std::pair<Loop *, LoopHeader>> ToExtract;
 
-  for (auto I : Loops) {
+  for (auto &I : Loops) {
     Function *F = M.getFunction(I.first);
-    if (F == nullptr)
-      error("input module doesn't contain function " + I.first);
+    if (F == nullptr) {
+      // unable to find the function because it's been renamed
+      auto &NewName = Renaming[I.first];
+      F = M.getFunction(NewName);
+      if (F == nullptr) {
+        error("input module doesn't contain function " + I.first);
+      }
+    }
 
     std::set<unsigned> &Ls = I.second;
 
