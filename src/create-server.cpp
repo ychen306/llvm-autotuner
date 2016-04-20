@@ -151,7 +151,9 @@ void create_server(Module &M)
     for (BasicBlock &BB : F) {
       for (BasicBlock::iterator I = BB.begin(); I != BB.end(); ++I) {
         CallInst *Call = dyn_cast<CallInst>(&*I);
-        if (Call && Call->getCalledFunction()->getName() == FunctionToRun) {
+        if (Call &&
+            Call->getCalledFunction() &&
+            Call->getCalledFunction()->getName() == FunctionToRun) {
           Type *RetTy = Call->getFunctionType()->getReturnType();
           // cast _server_spawn_worker's return type to whatever `Call` returns
           auto *SpawnTy = FunctionType::get(RetTy, SpawnFn->getFunctionType()->params(), false)->getPointerTo();
@@ -159,7 +161,6 @@ void create_server(Module &M)
                                    new BitCastInst(SpawnFn, SpawnTy, "", Call),
                                    GenericFnTy);
           Call->eraseFromParent();
-          return;
         }
       }
     }
