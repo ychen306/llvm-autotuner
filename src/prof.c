@@ -8,12 +8,15 @@
 #include <math.h>
 #include <assert.h>
 #include <errno.h>
+#include <sys/mman.h>
 
 #include "common.h"
 
 #define PROF_FLAT_OUT "loop-prof.flat.csv"
 #define PROF_GRAPH_OUT "loop-prof.graph.csv"
 #define PROF_DUMP "loop_prof.out"
+
+#define END_OF_ROW -1
 
 // sample every 100 us
 #define SAMPLING_INTERVAL 100
@@ -77,6 +80,7 @@ void add_module_desc(int32_t *_numloops, struct loop_data *_p_l,
 static struct timespec begin;
 
 FILE *dumpfile;
+size_t dumpsize;
 size_t num_sampled;
 
 struct fraction {
@@ -187,7 +191,23 @@ static void collect_sample_impl(uint32_t *running_instance) {
   }
 }
 
-static void collect_sample(uint32_t *running_instance) {
+// turn [(col1, val1), ...] into [val1, val2, ...]
+// return bytes read from `dump`
+static int uncompress_one_row(uint32_t *row, uint32_t *dump) {
+  bzero(row, sizeof(uint32_t) * _prof_num_loops_tot);
+  int i = 0;
+  for (;;) {
+    int col = dump[i++];
+    if (col == END_OF_ROW)
+      break;
+
+    uint32_t val = dump[i++];
+    row[col] = val;
+  }
+  return i;
+}
+
+static void collect_samples(uint32_t *dump) {
   // Nothing to do if there are zero loops
   if (_prof_num_loops_tot == 0)
     return;
@@ -196,34 +216,66 @@ static void collect_sample(uint32_t *running_instance) {
   if (profiles == NULL)
     create_profiles();
 
-  // Debug infinite loop
-  static int inCollect = 0;
-  printf("In collect_sample %d\n", ++inCollect);
-
   // update profiles of all the loops given a new sample
-  collect_sample_impl(running_instance);
+  uint32_t *running_instance = malloc(sizeof(uint32_t) * _prof_num_loops_tot);
+  assert(running_instance && "out of memory");
+
+  size_t i;
+  for (i = 0; i < num_sampled; i++) {
+
+#ifndef NDEBUG
+    // Debug infinite loop
+    static int inCollect = 0;
+    printf("In collect_sample %d\n", ++inCollect);
+#endif
+
+    dump += uncompress_one_row(running_instance, dump);
+    collect_sample_impl(running_instance);
+  }
+}
+
+// similar to `fwrite` except guaranteeing writing all bytes
+static int fwriteall(void *buf, size_t size, FILE *f) {
+  size_t num_written = 0;
+  do {
+    ssize_t bytes = fwrite((char *)buf + num_written, 1, size - num_written, f);
+    assert(bytes >= 0 && "fwrite failed");
+    num_written += bytes;
+  } while (num_written < size);
+  return 0;
 }
 
 // Sample what loops and functions are running and write sample data to a file
-static int dump_one_sample(module_desc *desc) {
+static void dump_one_sample(module_desc *desc) {
   // Write the sample data for each module
-  size_t num_written = 0;
-  do {
-    ssize_t bytes =
-        fwrite(desc->_prof_loops_running_p + num_written, sizeof(uint32_t),
-               desc->_prof_num_loops - num_written, dumpfile);
-    num_written += bytes;
-  } while (num_written < desc->_prof_num_loops);
-  return num_written;
+  /*
+  int success = fwriteall(desc->_prof_loops_running_p, desc->_prof_num_loops *
+  sizeof(uint32_t),
+                  dumpfile);
+                  */
+  uint32_t i;
+  for (i = 0; i < desc->_prof_num_loops; i++) {
+    if (desc->_prof_loops_running_p[i] == 0)
+      continue;
+
+    fwriteall(&i, sizeof(uint32_t), dumpfile);
+    fwriteall(desc->_prof_loops_p + i, sizeof(uint32_t), dumpfile);
+    dumpsize += sizeof(uint32_t) * 2;
+  }
 }
 
 // Sample what loops and functions are running and write sample data to a file
 static void dump_sample(int signo) {
   for (module_desc *desc = module_desc_list_head; desc != NULL;
        desc = desc->next) {
-    size_t num_written = dump_one_sample(desc);
-    assert(num_written == desc->_prof_num_loops && "Invalid dump");
+    dump_one_sample(desc);
   }
+
+  // write a token to signify end of the row
+  int end = END_OF_ROW;
+  fwriteall(&end, sizeof(uint32_t), dumpfile);
+  dumpsize += sizeof(uint32_t);
+
   num_sampled++;
   setup_timer();
 }
@@ -232,7 +284,6 @@ void _prof_init() {
   dumpfile = fopen(PROF_DUMP, "w+");
 
   srand(time(NULL));
-  // create_profiles();
   clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
   setup_timer();
 }
@@ -245,24 +296,28 @@ void _prof_dump() {
   signal(SIGPROF, SIG_IGN);
 
   // read sample from the dump
-  uint32_t *buf = malloc(sizeof(uint32_t) * _prof_num_loops_tot);
   fflush(dumpfile);
   rewind(dumpfile);
-  for (size_t i = 0, N = num_sampled; i < N; i++) {
-    size_t num_read = 0;
-    do {
+  uint32_t *dump =
+      mmap(NULL, dumpsize, PROT_READ, MAP_PRIVATE, fileno(dumpfile), 0);
+  assert(dump && "failed to mmap dumpfile");
+  fclose(dumpfile);
+  collect_samples(dump);
+  /*
+for (size_t i = 0, N = num_sampled; i < N; i++) {
+  size_t num_read = 0;
+  do {
       size_t n = fread(buf + num_read, sizeof(uint32_t),
                        _prof_num_loops_tot - num_read, dumpfile);
       num_read += n;
       if (feof(dumpfile) && num_read < _prof_num_loops_tot) {
-        perror("Unexpected EOF in dump file");
-        assert(0);
+          perror("Unexpected EOF in dump file");
+          assert(0);
       }
-    } while (num_read < _prof_num_loops_tot);
-    collect_sample(buf);
-  }
-  free(buf);
-  fclose(dumpfile);
+  } while (num_read < _prof_num_loops_tot);
+  collect_sample(buf);
+}
+  */
 
   // time the process in ms
   struct timespec end;
