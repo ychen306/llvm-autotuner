@@ -1,5 +1,7 @@
 # makefile for generating `loop-prof.out.csv` for a bitcode file
 
+LEVEL := .
+
 # begin config
 ifndef TARGET
     TARGET=bzip2
@@ -59,5 +61,5 @@ $(EXE): $(OBJ)
 	$(CXX) $^ $(LIBS) -o $@
 
 clean:
-	rm -f $(EXE) $(MODULES) $(OBJ) $(INSTRUMENTED_MODS) $(PROF_OUT)
+	rm -f $(EXE) $(OBJ) $(INSTRUMENTED_MODS) $(PROF_OUT)
 
