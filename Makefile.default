@@ -8,7 +8,7 @@ CCFLAGS = $(shell $(CONFIG) --cflags) -O0 -g
 SRC_DIR = src
 BIN_DIR = bin
 OBJ_DIR = obj
-TOOLS = extract-loops instrument-loops create-server combine
+TOOLS = extract-loops instrument-loops create-server autotune
 NATIVE_OBJS = prof.o
 BC_OBJS = prof.bc server.bc
 
@@ -40,6 +40,9 @@ obj/%.o: $(SRC_DIR)/%.cpp
 
 bin/%: obj/%.o
 	$(CXX) $^ $(LDFLAGS) -o $@
+
+bin/autotune: $(SRC_DIR)/autotune.go
+	go build -o $@ $^
 
 clean:
 	rm -rf *.o $(EXES) $(OBJS)
