@@ -340,7 +340,8 @@ def select_invos(this, modules, func, provided_makefile):
 default_config = dict(
     tunerpath='.',
     flat_profile='loop-prof.flat.csv',
-    graph_profile='loop-prof.graph.csv')
+    graph_profile='loop-prof.graph.csv',
+    makefile='provided.mak')
 
 def get_config(): 
     arg_parser = argparse.ArgumentParser()
@@ -354,6 +355,9 @@ def get_config():
     arg_parser.add_argument("--flat_profile",
             default=default_config['flat_profile'],
             help="path to loop-prof.flat.csv")
+    arg_parser.add_argument("--makefile",
+            default=default_config['makefile'],
+            help="path to makefile")
     return arg_parser.parse_args()
 
 if __name__ == '__main__':
@@ -363,7 +367,7 @@ if __name__ == '__main__':
     candidates = find_candidate_loops(loops)
     
     # now extract candidate loops
-    provided_makefile = 'provided.mak'
+    provided_makefile = config.makefile
     provided_bc = sys.argv[1]
     extracted_modules, extracted_loops = extract(provided_bc, candidates)
 
