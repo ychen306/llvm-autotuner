@@ -1,6 +1,8 @@
 # makefile for generating `loop-prof.out.csv` for a bitcode file
 
-LEVEL := .
+ifndef LEVEL
+    LEVEL := .
+endif
 
 # begin config
 ifndef TARGET
