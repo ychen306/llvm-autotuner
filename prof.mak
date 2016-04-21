@@ -37,7 +37,7 @@ ifneq ($(OS),Darwin)
 	LIBS += -lrt
 endif
 
-PROF_OUT = loop-prof.flat.csv loop-prof.graph.csv
+PROF_OUT = loop-prof.flat.csv loop-prof.graph.csv loop_prof.out
 
 .PRECIOUS: %.bc
 
@@ -63,5 +63,5 @@ $(EXE): $(OBJ)
 	$(CXX) $^ $(LIBS) -o $@
 
 clean:
-	rm -f $(EXE) $(OBJ) $(INSTRUMENTED_MODS) $(PROF_OUT)
+	rm -f $(EXE) $(OBJ) $(MODULES) $(INSTRUMENTED_MODS) $(PROF_OUT)
 
