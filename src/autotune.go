@@ -49,8 +49,6 @@ func (err *TuningError) Error() string {
 }
 
 const (
-	OPTS_FILENAME = "opts.txt"
-
 	// parameters for simulated annealing
 	MAX_ITR_WITHOUT_CHANGE = 100 // quit after this many iterations without improvement
 	SA_MAXOPTS             = 120
@@ -77,6 +75,7 @@ var (
 	verifyRule  string
 	workerFile  string
 	weightFile  string
+	passesFile  string
 	usingServer bool
 
 	logfile *os.File
@@ -106,6 +105,7 @@ func init() {
 	flag.BoolVar(&usingServer, "server", false, "use replay-server to speedup search")
 	flag.StringVar(&workerFile, "worker-data", "worker-data.txt", "file listing path to unix sockets")
 	flag.StringVar(&weightFile, "worker-weight", "worker-weight.txt", "file listing weights of which replay worker")
+	flag.StringVar(&passesFile, "passes", "opts.txt", "file listing passes")
 
 	flag.Parse()
 	posArgs := flag.Args()
@@ -545,7 +545,7 @@ func getAcceptanceProb(oldCost, newCost time.Duration, t float64) (ap float64) {
 
 func loadopts() {
 	// load options for `Config`
-	optsFileContent, err := ioutil.ReadFile(OPTS_FILENAME)
+	optsFileContent, err := ioutil.ReadFile(passesFile)
 	if err != nil {
 		log.Fatal(err)
 	}

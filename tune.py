@@ -26,6 +26,8 @@ TUNING_UPPERBOUND = 60
 TUNING_LOWERBOUND = 10
 
 MAX_INVOS = 10000
+# maximum number of workers spawn to run invocations
+MAX_WORKERS = 100
 
 Loop = namedtuple('Loop', [
     'function',
@@ -136,7 +138,7 @@ def delete_temp(filename):
 # helper function to call `./autotune -makefile=[makefile] [bc]`
 # return the optimization sequence
 def tune(bc, makefile, obj_var, using_server=False):
-    call('{tunerpath}/bin/autotune -makefile={makefile} -obj-var={obj_var} -server={using_server} {bc}'.format(
+    call('{tunerpath}/bin/autotune -passes={tunerpath}/opts.txt -makefile={makefile} -obj-var={obj_var} -server={using_server} {bc}'.format(
         tunerpath=config.tunerpath,
         makefile=makefile,
         obj_var=obj_var,
@@ -380,10 +382,16 @@ if __name__ == '__main__':
     for m in extracted_modules[1:]:
         loop = extracted_loops[m]
 
-        invos, weights = select_invos(m, extracted_modules, loop['extracted_func'], provided_makefile)
+        #invos, weights = select_invos(m, extracted_modules, loop['extracted_func'], provided_makefile)
+        for l in candidates:
+            if l.function == loop['func'] and l.header_id == loop['header_id']:
+                num_invos = l.runs
+                break
+        invos = random.sample(xrange(num_invos), MAX_WORKERS)
+
         with open('worker-weight.txt', 'w') as weight_file:
-            for weight in weights:
-                print >>weight_file, weight
+            for _ in invos:
+                print >>weight_file, 1
 
         print 'creating server to run %s in %s' % (loop['extracted_func'], m)
         server = create_server(main_lib, extracted_modules, loop['extracted_func'], invos)
