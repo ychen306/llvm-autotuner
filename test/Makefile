@@ -1,7 +1,11 @@
 LEVEL = ..
 
-MODULES = pi.bc myadd.bc
-TARGET = pi
+ifndef TARGET
+    TARGET = pi
+    MODULES = pi.bc myadd.bc
+else
+    MODULES = $(TARGET).bc
+endif
 LIBS = -lm
 ARGS = " "
 

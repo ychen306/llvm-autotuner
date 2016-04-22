@@ -22,7 +22,7 @@ int main(int argc, char *argv[]) {
       yran = 5813.0;
       ymult = 1307.0;
       ymod = 5471.0;
-#undef SMALL_PROBLEM_SIZE
+#define SMALL_PROBLEM_SIZE
 #ifdef SMALL_PROBLEM_SIZE
       itot = 4000000;
 #else
