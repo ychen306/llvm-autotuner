@@ -1,4 +1,3 @@
-Makefile
 bin/
 loop-prof.flat.csv
 loop-prof.graph.csv

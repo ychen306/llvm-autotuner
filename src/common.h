@@ -1,6 +1,8 @@
 #ifndef _COMMON_H_
 #define _COMMON_H_
 
+#include <time.h>
+
 // mach dosen't have `clock_gettime`
 #ifdef __MACH__
 #include <mach/clock.h>
