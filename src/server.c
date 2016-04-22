@@ -94,8 +94,10 @@ uint32_t _server_spawn_worker(uint32_t (*orig_func)(void *), char *funcname,
   memset(msg, 0, sizeof msg);
 
   char sock_path[100] = "/tmp/tuning-XXXXXX";
+  char *tempdir;
   if (can_spawn) {
     mkdtemp(sock_path);
+	tempdir = strdup(sock_path);
     strcat(sock_path, "/socket");
   }
 
@@ -176,6 +178,7 @@ uint32_t _server_spawn_worker(uint32_t (*orig_func)(void *), char *funcname,
       close(cli_fd);
     }
     unlink(sock_path);
+	rmdir(tempdir);
     exit(0);
   } else { // body of parent process
     if (can_spawn) {

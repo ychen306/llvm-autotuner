@@ -55,7 +55,7 @@ const (
 	T_MIN                  = 0.1
 	T_MAX                  = 1
 	INTERVAL               = 100 // decrease temperature at this interval
-	ALPHA                  = 0.9
+	ALPHA                  = 0.5
 	REPLACE_RATE           = 0.2
 
 	COMPILER_TIMEOUT = 30 * time.Second
@@ -250,6 +250,7 @@ func compile(config OptConfig) (obj TempFile, err error) {
 	optArgs := append(config.asArgs(), bcFile, "-o", string(optbc))
 	_, err = runCommand(exec.Command("opt", optArgs...), COMPILER_TIMEOUT)
 	if err != nil {
+		obj.delete()
 		return
 	}
 	_, err = runCommand(exec.Command("llc",
@@ -257,6 +258,9 @@ func compile(config OptConfig) (obj TempFile, err error) {
 		"-relocation-model="+relocModel,
 		string(optbc),
 		"-o", string(obj)), COMPILER_TIMEOUT)
+	if err != nil {
+		obj.delete()
+	}
 	return
 }
 
