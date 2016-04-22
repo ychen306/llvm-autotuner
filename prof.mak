@@ -63,5 +63,5 @@ $(EXE): $(OBJ)
 	$(CXX) $^ $(LIBS) -o $@
 
 clean:
-	rm -f $(EXE) $(OBJ) $(MODULES) $(INSTRUMENTED_MODS) $(PROF_OUT)
+	rm -f $(EXE) $(OBJ) $(INSTRUMENTED_MODS) $(PROF_OUT)
 
