@@ -1,0 +1,10 @@
+tbaa basicaa globalopt ipsccp deadargelim basiccg inline reassociate indvars loop-distribute
+argpromotion scalarrepl-ssa early-cse jump-threading correlated-propagation consthoist simplifycfg
+delinearize float2int instsimplify irce load-combine lowerinvoke lowerswitch mldst-motion
+tailcallelim loop-rotate licm slsr prune-eh loop-interchange dce die partial-inliner
+loop-reduce loop-instsimplify mergefunc speculative-execution lcssa strip always-inline
+loop-unswitch loop-simplify loop-idiom loop-deletion loop-vectorize lower-expect loop-unroll gvn memcpyopt sccp 
+instcombine jump-threading dse adce strip-dead-prototypes globaldce constmerge 
+basicaa basiccg da domfrontier domtree globalsmodref-aa intervals iv-users lazy-value-info
+libcall-aa memdep scalar-evolution scev-aa postdomtree regions functionattrs slp-vectorizer
+bb-vectorize
