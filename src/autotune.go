@@ -533,11 +533,10 @@ func getAcceptanceProb(oldCost, newCost time.Duration, t float64) (ap float64) {
 		ap = 1
 	} else {
 		// 1 unit = 0.5%
-		//e := int(math.Log10(float64(oldCost)) - 1)
-		//normalizedOld := float64(oldCost) / math.Pow10(e)
-		//normalizedNew := float64(newCost) / math.Pow10(e)
-		//diff := float64(normalizedOld - normalizedNew)
-		diff := -1.
+		e := int(math.Log10(float64(oldCost)) - 1)
+		normalizedOld := float64(oldCost) / math.Pow10(e)
+		normalizedNew := float64(newCost) / math.Pow10(e)
+		diff := float64(normalizedOld - normalizedNew)
 		ap = math.Exp(diff / t)
 	}
 	return
