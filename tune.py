@@ -323,7 +323,7 @@ def select_invos(this, modules, func, provided_makefile):
     call('make -f{provided} OBJ={obj} EXE={exe} run'.format(
         provided=provided_makefile,
         obj=obj,
-        exe=exe))
+        exe=os.path.abspath(exe)))
 
     delete_temp(obj)
     delete_temp(exe)
@@ -396,7 +396,7 @@ if __name__ == '__main__':
         print 'creating server to run %s in %s' % (loop['extracted_func'], m)
         server = create_server(main_lib, extracted_modules, loop['extracted_func'], invos)
     
-        server_path = os.path.join(os.getcwd(), server)
+        server_path = os.path.abspath(server)
     
         print 'spawning workers'
         call('make -f%s EXE=%s run' % (provided_makefile, server_path))

@@ -1,10 +1,8 @@
 $(EXE): $(OBJ)
 	clang++ $(OBJ) -o $(EXE)
-	/bin/cp $(EXE) $(@F)
 
 run: $(EXE)
-	$(<F) bzip2.input.program 10
-	/bin/rm $(<F)
+	$(EXE) bzip2.input.program 10
 
 verify:
 	bash -c 'diff $(STDOUT) bzip2.out'
