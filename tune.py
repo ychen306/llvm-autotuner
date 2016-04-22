@@ -5,7 +5,7 @@ import subprocess
 import csv
 import random
 from collections import namedtuple
-from tempfile import mkstemp
+from tempfile import mkdtemp
 import sklearn.preprocessing
 import sklearn.cluster
 import numpy as np
@@ -126,12 +126,12 @@ def call(cmd):
 
 # get a temporary file
 def get_temp():
-    _, f = mkstemp()
-    return f
+    dir = mkdtemp()
+    return os.path.join(dir, 'tempfile')
 
 # delete a temporary file
 def delete_temp(filename):
-    call('rm -f '+filename)
+    call('rm -rf '+os.path.dirname(filename))
 
 # helper function to call `./autotune -makefile=[makefile] [bc]`
 # return the optimization sequence
@@ -289,7 +289,7 @@ def find_clusters(elapsed):
         invos_ = invos[labels == cluster]
         elapsed_ = elapsed[labels == cluster]
         mean = np.mean(elapsed_)
-        rep_idx = np.argmin(elapsed_ - mean)
+        rep_idx = np.argmin(np.abs(elapsed_ - mean))
         rep = invos_[rep_idx]
         weight = np.sum(elapsed_) / elapsed_[rep_idx][0]
         representatives.append(rep)
@@ -299,9 +299,9 @@ def find_clusters(elapsed):
 
 # return a set of a invocations representative of the functions
 def select_invos(this, modules, func, provided_makefile):
-    obj = get_temp()
-    exe = get_temp()
     instrumented = get_temp()
+    exe = get_temp()
+    obj = get_temp()
 
     # do the second profiling run
     call('{tunerpath}/bin/instrument-invos {input} -o {output} -f{func}'.format(
@@ -368,7 +368,7 @@ if __name__ == '__main__':
     
     # now extract candidate loops
     provided_makefile = config.makefile
-    provided_bc = sys.argv[1]
+    provided_bc = config.input
     extracted_modules, extracted_loops = extract(provided_bc, candidates)
 
     print 'extracted module(s):', ' '.join(extracted_modules[1:])
