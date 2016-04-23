@@ -33,40 +33,33 @@
 
 using namespace llvm;
 
-cl::opt<std::string>
-InputFilename(
-    cl::Positional,
-    cl::desc("<input file>"),
-    cl::Required);
+cl::opt<std::string> InputFilename(cl::Positional, cl::desc("<input file>"),
+                                   cl::Required);
 
-cl::opt<std::string>
-OutputFilename( 
-    "o", 
-    cl::desc("Specify output file name"), 
-    cl::value_desc("<output file>"));
-
+cl::opt<std::string> OutputFilename("o", cl::desc("Specify output file name"),
+                                    cl::value_desc("<output file>"));
 
 // create an IRBuilder that inserts instructions in the first
 // non-phi and non-pad instructions
-IRBuilder<> createFrontBuilder(BasicBlock *BB)
-{
+IRBuilder<> createFrontBuilder(BasicBlock *BB) {
   BasicBlock::iterator I(BB->getFirstNonPHI());
-  while (isa<LandingPadInst>(I)) ++I; 
+  while (isa<LandingPadInst>(I))
+    ++I;
 
-  return IRBuilder<> (BB, I);
+  return IRBuilder<>(BB, I);
 }
 
 namespace llvm {
 void initializeLoopInstrumentationPass(PassRegistry &);
-}; 
+};
 
 // pass to insert `prof_begin` and `prof_end` to profile loops
-// 
-// implement this as a `ModulePass` so that 
+//
+// implement this as a `ModulePass` so that
 // we can insert a global array of `struct loop_data`
 // into the module as well as reference a loop with
 // its loop header, which we reference by visiting order
-struct LoopInstrumentation : public ModulePass {                       
+struct LoopInstrumentation : public ModulePass {
   static char ID;
 
   Module *CurModule;
@@ -78,46 +71,54 @@ struct LoopInstrumentation : public ModulePass {
     initializeLoopInstrumentationPass(*PassRegistry::getPassRegistry());
   };
 
-  virtual bool runOnModule(Module &) override; 
+  virtual bool runOnModule(Module &) override;
 
   StructType *LoopProfileTy;
 
-  // return a constant `struct loop_profile` initializer for a loop or (a function)
+  // return a constant `struct loop_profile` initializer for a loop or (a
+  // function)
   Constant *getLoopProfileInitializer(Constant *Fn, unsigned Id);
 
   // declare and initialize data for profiler
-  Function* initGlobals(std::vector<Constant *> &);
+  Function *initGlobals(std::vector<Constant *> &);
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<LoopInfoWrapperPass>();
   }
 
-
-  // insert code in the beginning of an entry block and return address it's matching address
+  // insert code in the beginning of an entry block and return address it's
+  // matching address
   // in `_prof_loops_running`
-  Value *instrumentEntry(BasicBlock *Entry, unsigned Idx, bool Exclusive=true);
-  void instrumentExit(BasicBlock *Exit, Value *RunningAddr, bool Exclusive=true);
+  Value *instrumentEntry(BasicBlock *Entry, unsigned Idx,
+                         bool Exclusive = true);
+  void instrumentExit(BasicBlock *Exit, Value *RunningAddr,
+                      bool Exclusive = true);
   // instrument a loop to record loop entrance/exit
   void instrumentLoop(unsigned Idx, Loop *L);
 
-  const char *getPassName() const override { return "LoopInstrumentation pass"; }
+  const char *getPassName() const override {
+    return "LoopInstrumentation pass";
+  }
 };
 
-void LoopInstrumentation::instrumentExit(BasicBlock *Exit, Value *RunningAddr, bool Exclusive)
-{
+void LoopInstrumentation::instrumentExit(BasicBlock *Exit, Value *RunningAddr,
+                                         bool Exclusive) {
   LLVMContext &Ctx = CurModule->getContext();
   Type *Int32Ty = Type::getInt32Ty(Ctx);
-  GlobalVariable *LoopEntryAddr = CurModule->getGlobalVariable("_prof_entry",
-						/*AllowInternal*/true);
+  GlobalVariable *LoopEntryAddr =
+      CurModule->getGlobalVariable("_prof_entry",
+                                   /*AllowInternal*/ true);
 
   // insert in the beginning of the exit block
-  auto Builder = Exclusive ? createFrontBuilder(Exit) : IRBuilder<>(Exit, Exit->getTerminator());
+  auto Builder = Exclusive ? createFrontBuilder(Exit)
+                           : IRBuilder<>(Exit, Exit->getTerminator());
   Value *LoopEntry = Builder.CreateLoad(LoopEntryAddr);
 
   // emit `_prof_loops_running[idx] -= _prof_entry`
-  Builder.CreateStore(
-    Builder.CreateBinOp(Instruction::Sub, Builder.CreateLoad(RunningAddr), LoopEntry),
-    RunningAddr);
+  Builder.CreateStore(Builder.CreateBinOp(Instruction::Sub,
+                                          Builder.CreateLoad(RunningAddr),
+                                          LoopEntry),
+                      RunningAddr);
 
   // emit `_prof_entry -= 1`
   Value *DecLoopEntry = Builder.CreateBinOp(Instruction::Sub, LoopEntry,
@@ -125,77 +126,72 @@ void LoopInstrumentation::instrumentExit(BasicBlock *Exit, Value *RunningAddr, b
   Builder.CreateStore(DecLoopEntry, LoopEntryAddr);
 }
 
-Value *LoopInstrumentation::instrumentEntry(BasicBlock *Entry, unsigned Idx, bool Exclusive)
-{
+Value *LoopInstrumentation::instrumentEntry(BasicBlock *Entry, unsigned Idx,
+                                            bool Exclusive) {
   LLVMContext &Ctx = CurModule->getContext();
-  Type *Int32Ty = Type::getInt32Ty(Ctx),
-       *Int64Ty = Type::getInt64Ty(Ctx);
+  Type *Int32Ty = Type::getInt32Ty(Ctx), *Int64Ty = Type::getInt64Ty(Ctx);
 
-  GlobalVariable *Profiles = CurModule->getGlobalVariable("_prof_loops",
-						/*AllowInternal*/true);
-  GlobalVariable *RunningArr=CurModule->getGlobalVariable("_prof_loops_running",
-						/*AllowInternal*/true);
-  GlobalVariable *LoopEntryAddr=CurModule->getGlobalVariable("_prof_entry",
-						/*AllowInternal*/true);
+  GlobalVariable *Profiles =
+      CurModule->getGlobalVariable("_prof_loops",
+                                   /*AllowInternal*/ true);
+  GlobalVariable *RunningArr =
+      CurModule->getGlobalVariable("_prof_loops_running",
+                                   /*AllowInternal*/ true);
+  GlobalVariable *LoopEntryAddr =
+      CurModule->getGlobalVariable("_prof_entry",
+                                   /*AllowInternal*/ true);
 
-  auto Builder = Exclusive ?
-    IRBuilder<>(Entry, Entry->getTerminator()) :
-    createFrontBuilder(Entry);
+  auto Builder = Exclusive ? IRBuilder<>(Entry, Entry->getTerminator())
+                           : createFrontBuilder(Entry);
   Constant *Zero = ConstantInt::get(Int32Ty, 0),
            *RunsIdx = ConstantInt::get(Int32Ty, 2);
 
   // get Profile from global array
-  std::vector<Value *> ProfileIndexes { Zero, ConstantInt::get(Int32Ty, Idx) }; 
+  std::vector<Value *> ProfileIndexes{Zero, ConstantInt::get(Int32Ty, Idx)};
   Value *Profile = Builder.Insert(GetElementPtrInst::CreateInBounds(
-      ProfileArrTy,
-      Profiles,
-      ProfileIndexes)); 
+      ProfileArrTy, Profiles, ProfileIndexes));
 
   // emit code for `++_prof_entry`
-  Value *LoopEntry = Builder.CreateBinOp(Instruction::Add,
-    Builder.CreateLoad(LoopEntryAddr), ConstantInt::get(Int32Ty, 1));
-  Builder.CreateStore(LoopEntry, LoopEntryAddr); 
+  Value *LoopEntry =
+      Builder.CreateBinOp(Instruction::Add, Builder.CreateLoad(LoopEntryAddr),
+                          ConstantInt::get(Int32Ty, 1));
+  Builder.CreateStore(LoopEntry, LoopEntryAddr);
 
   // emit `_prof_loops_running[idx] += ++_prof_entry`
-  std::vector<Value *> RunningIndexes { Zero, ConstantInt::get(Int32Ty, Idx) }; 
+  std::vector<Value *> RunningIndexes{Zero, ConstantInt::get(Int32Ty, Idx)};
   Value *RunningAddr = Builder.Insert(GetElementPtrInst::CreateInBounds(
-      RunningArrTy,
-      RunningArr, 
-      RunningIndexes)); 
-  Builder.CreateStore(
-      Builder.CreateBinOp(Instruction::Add, LoopEntry, Builder.CreateLoad(RunningAddr)),
-      RunningAddr);
-  
+      RunningArrTy, RunningArr, RunningIndexes));
+  Builder.CreateStore(Builder.CreateBinOp(Instruction::Add, LoopEntry,
+                                          Builder.CreateLoad(RunningAddr)),
+                      RunningAddr);
+
   // emit `_prof_loops[idx].runs++`
-  std::vector<Value *> RunsIndexes { Zero, RunsIdx };
-  Value *RunsAddr = Builder.CreateInBoundsGEP(
-      LoopProfileTy,
-      Profile,
-      RunsIndexes);
+  std::vector<Value *> RunsIndexes{Zero, RunsIdx};
+  Value *RunsAddr =
+      Builder.CreateInBoundsGEP(LoopProfileTy, Profile, RunsIndexes);
   Value *OldRuns = Builder.CreateLoad(RunsAddr);
   Value *NewRuns = Builder.CreateBinOp(Instruction::Add, OldRuns,
-      ConstantInt::get(Int64Ty, 1));
+                                       ConstantInt::get(Int64Ty, 1));
   Builder.CreateStore(NewRuns, RunsAddr);
 
   return RunningAddr;
 }
 
-void LoopInstrumentation::instrumentLoop(unsigned Idx, Loop *L)
-{
-  BasicBlock *Preheader = L->getLoopPreheader(); 
+void LoopInstrumentation::instrumentLoop(unsigned Idx, Loop *L) {
+  BasicBlock *Preheader = L->getLoopPreheader();
   Value *RunningAddr = instrumentEntry(Preheader, Idx);
 
   SmallVector<BasicBlock *, 4> Exits;
   L->getExitBlocks(Exits);
   std::set<BasicBlock *> UniqExits(Exits.begin(), Exits.end());
 
-  for (BasicBlock *BB : UniqExits) { 
+  for (BasicBlock *BB : UniqExits) {
     instrumentExit(BB, RunningAddr);
   }
 }
 
-Function* LoopInstrumentation::initGlobals(std::vector<Constant *> &LoopProfiles)
-{ 
+Function *
+LoopInstrumentation::initGlobals(std::vector<Constant *> &LoopProfiles) {
   LLVMContext &Ctx = CurModule->getContext();
   unsigned NumLoops = LoopProfiles.size();
 
@@ -204,57 +200,45 @@ Function* LoopInstrumentation::initGlobals(std::vector<Constant *> &LoopProfiles
   // declare `_prof_loops`
   ProfileArrTy = ArrayType::get(LoopProfileTy, NumLoops);
   Constant *ArrContent = ConstantArray::get(ProfileArrTy, LoopProfiles);
-  GlobalVariable* Prof_Loops_GVar =
-    new GlobalVariable(*CurModule,
-                     ProfileArrTy,
-                     false, GlobalValue::PrivateLinkage,
-                     ArrContent, "_prof_loops", nullptr,
-                     GlobalVariable::NotThreadLocal,
-                     0);
+  GlobalVariable *Prof_Loops_GVar = new GlobalVariable(
+      *CurModule, ProfileArrTy, false, GlobalValue::PrivateLinkage, ArrContent,
+      "_prof_loops", nullptr, GlobalVariable::NotThreadLocal, 0);
 
   RunningArrTy = ArrayType::get(Int32Ty, NumLoops);
-  // declare `_prof_loops_running` 
-  GlobalVariable* Prof_Loops_Running_GVar =
-    new GlobalVariable(*CurModule,
-      RunningArrTy,
-      false, GlobalValue::PrivateLinkage,
+  // declare `_prof_loops_running`
+  GlobalVariable *Prof_Loops_Running_GVar = new GlobalVariable(
+      *CurModule, RunningArrTy, false, GlobalValue::PrivateLinkage,
       ConstantAggregateZero::get(RunningArrTy), "_prof_loops_running", nullptr,
-      GlobalVariable::NotThreadLocal,
-      0);
+      GlobalVariable::NotThreadLocal, 0);
 
   // also define `_prof_num_loop`
   Constant *NumLoop = ConstantInt::get(Int32Ty, NumLoops, true);
-  GlobalVariable *Prof_Num_Loops_GVar =
-    new GlobalVariable(*CurModule,
-      Int32Ty,
-      true, GlobalValue::PrivateLinkage,
-      NumLoop, "_prof_num_loops", nullptr,
-      GlobalVariable::NotThreadLocal,
-      0);
+  GlobalVariable *Prof_Num_Loops_GVar = new GlobalVariable(
+      *CurModule, Int32Ty, true, GlobalValue::PrivateLinkage, NumLoop,
+      "_prof_num_loops", nullptr, GlobalVariable::NotThreadLocal, 0);
 
   // Declare external function used to register global variables used
   // per module
   const std::string extFuncName = "add_module_desc";
   assert(CurModule->getNamedValue(extFuncName) == NULL &&
-	 "External function `add_module_desc' is in module already?");
-  Constant *descFuncDecl = CurModule->getOrInsertFunction(extFuncName,
-				Type::getVoidTy(Ctx), /* return type */
-				Type::getInt32PtrTy(Ctx),
-				PointerType::get(LoopProfileTy, 0),
-				Type::getInt32PtrTy(Ctx),
-				nullptr);
+         "External function `add_module_desc' is in module already?");
+  Constant *descFuncDecl = CurModule->getOrInsertFunction(
+      extFuncName, Type::getVoidTy(Ctx), /* return type */
+      Type::getInt32PtrTy(Ctx), PointerType::get(LoopProfileTy, 0),
+      Type::getInt32PtrTy(Ctx), nullptr);
 
   // Create a function to call the declaration function
-  FunctionType* newFType = FunctionType::get(Type::getVoidTy(Ctx),
-					     /*isVarArg*/ false);
-  Function* newF = Function::Create(newFType, GlobalValue::InternalLinkage,
-				    "callAddModuleDesc", CurModule);
-  BasicBlock* entryBlock = BasicBlock::Create(Ctx, "", newF);
+  FunctionType *newFType = FunctionType::get(Type::getVoidTy(Ctx),
+                                             /*isVarArg*/ false);
+  Function *newF = Function::Create(newFType, GlobalValue::InternalLinkage,
+                                    "callAddModuleDesc", CurModule);
+  BasicBlock *entryBlock = BasicBlock::Create(Ctx, "", newF);
   IRBuilder<> IRB(entryBlock);
-  ArrayRef<Value*> arrayRefList = { /* std::initializer_list for ArrayRef */
-    Prof_Num_Loops_GVar,
-    IRB.CreateBitCast(Prof_Loops_GVar, PointerType::get(LoopProfileTy, 0)),
-    IRB.CreateBitCast(Prof_Loops_Running_GVar, Type::getInt32PtrTy(Ctx)) };
+  ArrayRef<Value *> arrayRefList = {
+      /* std::initializer_list for ArrayRef */
+      Prof_Num_Loops_GVar,
+      IRB.CreateBitCast(Prof_Loops_GVar, PointerType::get(LoopProfileTy, 0)),
+      IRB.CreateBitCast(Prof_Loops_Running_GVar, Type::getInt32PtrTy(Ctx))};
   IRB.CreateCall(descFuncDecl, arrayRefList);
   IRB.CreateRetVoid();
 
@@ -269,53 +253,43 @@ char LoopInstrumentation::ID = 1;
 
 INITIALIZE_PASS_BEGIN(LoopInstrumentation, "", "", true, true)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
-INITIALIZE_PASS_END(LoopInstrumentation, "", "", true, true) 
+INITIALIZE_PASS_END(LoopInstrumentation, "", "", true, true)
 
-Constant *LoopInstrumentation::getLoopProfileInitializer(Constant *Fn, unsigned Id)
-{ 
+Constant *LoopInstrumentation::getLoopProfileInitializer(Constant *Fn,
+                                                         unsigned Id) {
   LLVMContext &Ctx = CurModule->getContext();
-  Type *Int32Ty = Type::getInt32Ty(Ctx),
-       *Int64Ty = Type::getInt64Ty(Ctx);
+  Type *Int32Ty = Type::getInt32Ty(Ctx), *Int64Ty = Type::getInt64Ty(Ctx);
 
-  // declare instance of `struct loop_data` 
-  std::vector<Constant *> Fields {
-    Fn,
-    ConstantInt::get(Int32Ty, Id),
-    ConstantInt::get(Int64Ty, 0)
-  };
+  // declare instance of `struct loop_data`
+  std::vector<Constant *> Fields{Fn, ConstantInt::get(Int32Ty, Id),
+                                 ConstantInt::get(Int64Ty, 0)};
 
   return ConstantStruct::get(LoopProfileTy, Fields);
 }
 
-bool LoopInstrumentation::runOnModule(Module &M)
-{ 
+bool LoopInstrumentation::runOnModule(Module &M) {
   CurModule = &M;
   LLVMContext &Ctx = M.getContext();
 
-  // declare 
+  // declare
   // ```
-  // struct loop_profile { 
+  // struct loop_profile {
   //     char *func;
   //     int32_t header_id;
   //     int64_t runs;
   // };
-  // ``` 
+  // ```
   LoopProfileTy = StructType::create(Ctx, "LoopProfile");
-  std::vector<Type *> Fields {
-    Type::getInt8PtrTy(Ctx),
-    Type::getInt32Ty(Ctx),
-    Type::getInt64Ty(Ctx)
-  };
+  std::vector<Type *> Fields{Type::getInt8PtrTy(Ctx), Type::getInt32Ty(Ctx),
+                             Type::getInt64Ty(Ctx)};
   LoopProfileTy->setBody(Fields);
 
   Type *Int32Ty = Type::getInt32Ty(Ctx);
   // Declare `_prof_entry`: it is private to each module
-  new GlobalVariable(*CurModule, 
-      Int32Ty,
-      false, GlobalValue::LinkOnceODRLinkage,
-      ConstantInt::get(Int32Ty, 0), "_prof_entry", nullptr,
-      GlobalVariable::NotThreadLocal,
-      0);
+  new GlobalVariable(*CurModule, Int32Ty, false,
+                     GlobalValue::LinkOnceODRLinkage,
+                     ConstantInt::get(Int32Ty, 0), "_prof_entry", nullptr,
+                     GlobalVariable::NotThreadLocal, 0);
 
   std::vector<Constant *> LoopProfiles;
   // index to profile entry
@@ -325,20 +299,20 @@ bool LoopInstrumentation::runOnModule(Module &M)
   // global variable to hold their profiling data
   for (Function &F : M.getFunctionList()) {
     // external function
-    if (F.empty()) continue;
+    if (F.empty())
+      continue;
 
     LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(F).getLoopInfo();
 
     // declare global str that refers to this function's name
     Constant *Str = ConstantDataArray::getString(Ctx, F.getName());
-    GlobalVariable *GV = new GlobalVariable(M, Str->getType(),
-        true, GlobalValue::PrivateLinkage,
-        Str, "prof.fn", nullptr,
-        GlobalVariable::NotThreadLocal,
-        0);
+    GlobalVariable *GV = new GlobalVariable(
+        M, Str->getType(), true, GlobalValue::PrivateLinkage, Str, "prof.fn",
+        nullptr, GlobalVariable::NotThreadLocal, 0);
     Constant *Zero = ConstantInt::get(Int32Ty, 0);
     std::vector<Constant *> Args = {Zero, Zero};
-    Constant *FnName = ConstantExpr::getInBoundsGetElementPtr(Str->getType(), GV, Args); 
+    Constant *FnName =
+        ConstantExpr::getInBoundsGetElementPtr(Str->getType(), GV, Args);
 
     // a loop's header id has to start from 1, so use 0 for function
     LoopProfiles.push_back(getLoopProfileInitializer(FnName, 0));
@@ -348,8 +322,9 @@ bool LoopInstrumentation::runOnModule(Module &M)
       ++i;
       Loop *L = LI.getLoopFor(&BB);
 
-      if (!L || L->getParentLoop() ||
-          !L->isLoopSimplifyForm() || L->getHeader() != &BB) continue;
+      if (!L || L->getParentLoop() || !L->isLoopSimplifyForm() ||
+          L->getHeader() != &BB)
+        continue;
 
       LoopProfiles.push_back(getLoopProfileInitializer(FnName, i));
     }
@@ -357,15 +332,17 @@ bool LoopInstrumentation::runOnModule(Module &M)
 
   // Create the global variables and the function to register them.
   // Get the function pointer so we don't instrument it!
-  Function* regFunc = initGlobals(LoopProfiles); 
+  Function *regFunc = initGlobals(LoopProfiles);
 
   // insert code in the entry and exit blocks of a function/loop
   for (Function &F : M.getFunctionList()) {
     // skip external functions
-    if (F.empty()) continue;
+    if (F.empty())
+      continue;
 
     // skip the registration function
-    if (&F == regFunc) continue;
+    if (&F == regFunc)
+      continue;
 
     LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(F).getLoopInfo();
 
@@ -383,18 +360,18 @@ bool LoopInstrumentation::runOnModule(Module &M)
       ++i;
       Loop *L = LI.getLoopFor(&BB);
 
-      if (!L || L->getParentLoop() ||
-          !L->isLoopSimplifyForm() || L->getHeader() != &BB) continue;
+      if (!L || L->getParentLoop() || !L->isLoopSimplifyForm() ||
+          L->getHeader() != &BB)
+        continue;
 
       instrumentLoop(Idx++, L);
     }
   }
 
   return true;
-} 
+}
 
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
   // Print a stack trace if we signal out.
   sys::PrintStackTraceOnErrorSignal();
   PrettyStackTraceProgram X(argc, argv);
@@ -402,7 +379,7 @@ int main(int argc, char **argv)
   cl::ParseCommandLineOptions(argc, argv, "instrument loop for profiling");
 
   LLVMContext &Context = getGlobalContext();
-  SMDiagnostic Err; 
+  SMDiagnostic Err;
   std::unique_ptr<Module> M = parseIRFile(InputFilename, Err, Context);
 
   std::error_code EC;
@@ -410,13 +387,13 @@ int main(int argc, char **argv)
   if (EC) {
     errs() << EC.message() << '\n';
     return 1;
-  } 
+  }
 
   legacy::PassManager Passes;
   Passes.add(new LoopInstrumentation());
   Passes.add(createBitcodeWriterPass(Out.os(), true));
 
   Passes.run(*M.get());
-  
+
   Out.keep();
 }

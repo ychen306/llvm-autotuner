@@ -25,30 +25,20 @@
 #include <llvm/Support/ToolOutputFile.h>
 #include <llvm/Support/raw_ostream.h>
 
-
 using namespace llvm;
 
-cl::opt<std::string>
-InputFilename(
-    cl::Positional,
-    cl::desc("<input file>"),
-    cl::Required);
+cl::opt<std::string> InputFilename(cl::Positional, cl::desc("<input file>"),
+                                   cl::Required);
+
+cl::opt<std::string> OutputFilename("o", cl::desc("Specify output file name"),
+                                    cl::value_desc("output file"));
 
 cl::opt<std::string>
-OutputFilename( 
-    "o", 
-    cl::desc("Specify output file name"), 
-    cl::value_desc("output file"));
+    FunctionInvoked("f",
+                    cl::desc("function whose invocations you want to profile"),
+                    cl::value_desc("function invoked"), cl::Prefix);
 
-cl::opt<std::string>
-FunctionInvoked(
-  "f",
-  cl::desc("function whose invocations you want to profile"),
-  cl::value_desc("function invoked"),
-  cl::Prefix);
-
-void instrumentInvokedFunction(Function *F)
-{
+void instrumentInvokedFunction(Function *F) {
   auto *M = F->getParent();
   auto &Ctx = M->getContext();
   auto *VoidTy = Type::getVoidTy(Ctx);
@@ -56,21 +46,17 @@ void instrumentInvokedFunction(Function *F)
   auto *FnTy = FunctionType::get(VoidTy, std::vector<Type *>{}, false);
 
   // declare `void _invos_begin()`
-  auto *BeginFn = Function::Create( 
-    FnTy, Function::ExternalLinkage,
-    "_invos_begin",
-    M);
+  auto *BeginFn =
+      Function::Create(FnTy, Function::ExternalLinkage, "_invos_begin", M);
 
   // declare `void _invos_end()`
-  auto *EndFn = Function::Create(
-    FnTy, Function::ExternalLinkage,
-    "_invos_end",
-    M);
+  auto *EndFn =
+      Function::Create(FnTy, Function::ExternalLinkage, "_invos_end", M);
 
   // call `_invos_begin()` in the beginning of the entry block
   auto &Entry = F->getEntryBlock();
   auto *First = &*Entry.getFirstInsertionPt();
-  CallInst::Create(BeginFn, std::vector<Value *>{}, "", First); 
+  CallInst::Create(BeginFn, std::vector<Value *>{}, "", First);
 
   // call `_invos_end()` in every exit blocks
   for (auto &BB : *F) {
@@ -80,17 +66,17 @@ void instrumentInvokedFunction(Function *F)
     }
   }
 }
-  
-int main(int argc, char **argv)
-{
+
+int main(int argc, char **argv) {
   // Print a stack trace if we signal out.
   sys::PrintStackTraceOnErrorSignal();
   PrettyStackTraceProgram X(argc, argv);
 
-  cl::ParseCommandLineOptions(argc, argv, "instrument module to profile invocations of a function");
+  cl::ParseCommandLineOptions(
+      argc, argv, "instrument module to profile invocations of a function");
 
   LLVMContext &Context = getGlobalContext();
-  SMDiagnostic Err; 
+  SMDiagnostic Err;
   std::unique_ptr<Module> M = parseIRFile(InputFilename, Err, Context);
 
   std::error_code EC;
@@ -98,13 +84,13 @@ int main(int argc, char **argv)
   if (EC) {
     errs() << EC.message() << '\n';
     return 1;
-  } 
+  }
 
   instrumentInvokedFunction(M->getFunction(FunctionInvoked));
 
   legacy::PassManager Passes;
   Passes.add(createBitcodeWriterPass(Out.os(), true));
   Passes.run(*M.get());
-  
+
   Out.keep();
 }
