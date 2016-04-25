@@ -10,6 +10,20 @@ import sklearn.preprocessing
 import sklearn.cluster
 import numpy as np
 import argparse
+import ctypes
+
+class Edge(ctypes.Structure):
+    _fields_ = [('src', ctypes.c_uint),
+            ('dest', ctypes.c_uint),
+            ('freq', ctypes.c_uint)]
+
+
+# read an edge from `f`
+def get_edge(f):
+    e = Edge()
+    bytes = f.readinto(e)
+    return e if bytes == ctypes.sizeof(Edge) else None
+
 
 class bcolors:
     HEADER = '\033[95m'
@@ -22,7 +36,7 @@ class bcolors:
     UNDERLINE = '\033[4m'
 
 # a loop's relative time (%) has to be above this threshold to become a tuning candidate
-TUNING_UPPERBOUND = 60
+TUNING_UPPERBOUND = 80
 TUNING_LOWERBOUND = 10
 
 MAX_INVOS = 10000
@@ -66,6 +80,15 @@ def get_loops():
 
     # figure out loop nesting
     with open(config.graph_profile) as graph:
+        while True:
+            e = get_edge(graph)
+            if e is None:
+                break;
+            if e.src not in loops or e.dest not in loops:
+                continue
+            loops[e.src].nested.append(e.dest)
+
+        '''
         for i, row in enumerate(graph):
             # row for function
             if i not in loops:
@@ -78,6 +101,7 @@ def get_loops():
                     continue
 
                 loops[i].nested.append(j)
+        '''
 
     return loops, func2loop
 
@@ -342,7 +366,7 @@ def select_invos(this, modules, func, provided_makefile):
 default_config = dict(
     tunerpath='.',
     flat_profile='loop-prof.flat.csv',
-    graph_profile='loop-prof.graph.csv',
+    graph_profile='loop-prof.graph.data',
     makefile='provided.mak')
 
 def get_config(): 

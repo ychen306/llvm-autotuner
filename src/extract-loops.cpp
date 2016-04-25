@@ -23,6 +23,7 @@
 #include <llvm/Support/ToolOutputFile.h>
 #include <llvm/Support/raw_ostream.h>
 
+#include "LoopCallProfile.h"
 #include <fstream>
 #include <sstream>
 #include <utility>
@@ -150,27 +151,12 @@ std::vector<LoopHeader> readGraphNodeMeta() {
   return Nodes;
 }
 
-// build an adjacency matrix for the dynamic call graph
-// NOTE: this doesn't do any error handling
-std::vector<std::vector<float>> loadDynCallGraph(unsigned NumNodes) {
-  std::ifstream Fin("loop-prof.graph.csv");
-  std::vector<std::vector<float>> G(NumNodes);
-  std::string NumStr;
-  for (unsigned i = 0; i < NumNodes; i++) {
-    G[i].resize(NumNodes);
-    for (unsigned j = 0; j < NumNodes; j++) {
-      Fin >> NumStr;
-      G[i][j] = std::stof(NumStr);
-    }
-  }
-  return G;
-}
-
 bool LoopExtractor::runOnModule(Module &M) {
   bool Changed = false;
 
   std::vector<LoopHeader> CGNodes = readGraphNodeMeta();
-  std::vector<std::vector<float>> DynCG = loadDynCallGraph(CGNodes.size());
+  LoopCallProfile DynCG;
+  DynCG.load("loop-prof.graph.data");
 
   // mapping function -> ids of basic blocks
   std::map<std::string, std::set<unsigned>> Loops;
@@ -235,12 +221,13 @@ bool LoopExtractor::runOnModule(Module &M) {
           break;
         }
       }
+      unsigned N = DynCG.get(CallerIdx, CallerIdx);
       // find out what functions are called by the loops
-      for (unsigned CalleeIdx = 0, E = DynCG.size(); CalleeIdx < E;
+      for (unsigned CalleeIdx = 0, E = CGNodes.size(); CalleeIdx < E;
            CalleeIdx++) {
         if (CalleeIdx == CallerIdx)
           continue;
-        float TimeSpent = DynCG[CallerIdx][CalleeIdx];
+        float TimeSpent = (float)DynCG.get(CallerIdx, CalleeIdx) / N;
         if (!std::isnan(TimeSpent) && TimeSpent > 0) {
           auto &Node = CGNodes[CalleeIdx];
           if (Node.HeaderId == 0)

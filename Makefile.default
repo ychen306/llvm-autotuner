@@ -35,8 +35,8 @@ obj/%.bc: $(SRC_DIR)/%.c $(SRC_DIR)/common.h
 obj/%.o: $(SRC_DIR)/%.c
 	$(CC) $^ $(CCFLAGS) -c -o $@
 
-obj/%.o: $(SRC_DIR)/%.cpp
-	$(CXX) $^ $(CXXFLAGS) -c -o $@
+obj/%.o: $(SRC_DIR)/%.cpp $(SRC_DIR)/LoopCallProfile.h
+	$(CXX) $< $(CXXFLAGS) -c -o $@
 
 bin/%: obj/%.o
 	$(CXX) $^ $(LDFLAGS) -o $@
