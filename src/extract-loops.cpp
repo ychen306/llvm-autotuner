@@ -239,15 +239,17 @@ bool LoopExtractor::runOnModule(Module &M)
       ExtractedLoops.push_back(Extracted);
       Headers.push_back(Header);
 
-      unsigned CallerIdx;
+      unsigned CallerIdx = -1;
       for (unsigned i = 0, e = CGNodes.size(); i != e; i++) {
         if (CGNodes[i] == Header) {
           CallerIdx = i;
           break;
         }
       }
+      assert(CallerIdx >= 0 && "Extracted loop index not found?");
+
       // find out what functions are called by the loops
-      for (unsigned CalleeIdx = 0, E = DynCG.size(); CalleeIdx < E; CalleeIdx++) {
+      for (unsigned CalleeIdx=0, E=DynCG.size(); CalleeIdx < E; CalleeIdx++) {
         if (CalleeIdx == CallerIdx) continue;
         float TimeSpent = DynCG[CallerIdx][CalleeIdx];
         if (!std::isnan(TimeSpent) && TimeSpent > 0) {
@@ -275,8 +277,9 @@ std::vector<GlobalValue *> getCalledFuncs(Module *M, Function *Caller)
 {
   std::vector<GlobalValue *> Funcs;
   for (auto &CalleeName : Called[Caller->getName()]) {
-	  auto *F = M->getFunction(CalleeName);
-	  if (!F) F = M->getFunction(Renaming[CalleeName]);
+    auto *F = M->getFunction(CalleeName);
+    if (!F) F = M->getFunction(Renaming[CalleeName]);
+    assert(F && "Called function not found in new module");
     Funcs.push_back(F);
   }
 
@@ -366,7 +369,7 @@ int main(int argc, char **argv)
     Module *NewModule = CloneModule(CopiedModule);
     std::string ExtractedName = Extracted->getName();
     Function *ExtractedF = NewModule->getFunction(ExtractedName);
-    std::vector<GlobalValue *> ToPreserve = getCalledFuncs(NewModule, ExtractedF);
+    std::vector<GlobalValue *> ToPreserve=getCalledFuncs(NewModule,ExtractedF);
     ToPreserve.push_back(ExtractedF);
 
     std::string BitcodeFName = newFileName();
