@@ -13,9 +13,10 @@
 #include <vector>
 
 #include "common.h"
+#include "LoopCallProfile.h"
 
 #define PROF_FLAT_OUT "loop-prof.flat.csv"
-#define PROF_GRAPH_OUT "loop-prof.graph.csv"
+#define PROF_GRAPH_OUT "loop-prof.graph.data"
 #define PROF_DUMP "loop_prof.out"
 
 #define END_OF_ROW -1
@@ -35,14 +36,7 @@ struct loop_data {
   int64_t runs;
 };
 
-class SparseMatrix {
-  typedef std::pair<unsigned, unsigned> Coord;
-  // mapping coordinate to value
-  std::map<Coord, uint32_t> m;
-
-public:
-  uint32_t &get(unsigned x, unsigned y) { return m[Coord(x, y)]; }
-} profiles;
+static LoopCallProfile profile;
 
 // Create a linked list of descriptors, one per linked module.
 //
@@ -127,23 +121,23 @@ static void setup_timer() {
 
 // running_instance[] is an array of integers recording which loops were
 // running at the time of the sample.  Use those to accumulate an NxN
-// matrix of profile entries, where profiles[i][j] is for loops i and j,
+// matrix of profile entries, where profile[i][j] is for loops i and j,
 // and each profile entry is as defined above.
 //
 static void collect_sample_impl(
     std::vector<std::pair<unsigned, unsigned>> running_instance) {
   for (unsigned i = 0, e = running_instance.size(); i != e; i++) {
     const auto &coli = running_instance[i];
-    profiles.get(coli.first, coli.first) += 1;
+    profile.get(coli.first, coli.first) += 1;
 
     for (unsigned j = i + 1, e = running_instance.size(); j != e; j++) {
       const auto &colj = running_instance[j];
       if (coli.second < colj.second) {
         // i called j
-        profiles.get(coli.first, colj.first) += 1;
+        profile.get(coli.first, colj.first) += 1;
       } else {
         // j called i
-        profiles.get(colj.first, colj.first) += 1;
+        profile.get(colj.first, colj.first) += 1;
       }
     }
   }
@@ -181,7 +175,7 @@ static void collect_samples(int32_t *dump) {
     printf("In collect_sample %d\n", ++inCollect);
 #endif
 
-    // update profiles of all the loops given a new sample
+    // update profile of all the loops given a new sample
     dump += uncompress_one_row(running_instance, dump);
     collect_sample_impl(running_instance);
     running_instance.resize(0);
@@ -261,8 +255,7 @@ void _prof_dump() {
   long long int elapsed =
       (end.tv_sec - begin.tv_sec) * 1e3 + (end.tv_nsec - begin.tv_nsec) / 1e6;
 
-  FILE *flat_out = fopen(PROF_FLAT_OUT, "wb"),
-       *graph_out = fopen(PROF_GRAPH_OUT, "wb");
+  FILE *flat_out = fopen(PROF_FLAT_OUT, "wb");
 
   fprintf(flat_out, "function,header-id,runs,time(pct),time(ms)\n");
   uint32_t loop_idx = 0;
@@ -271,28 +264,14 @@ void _prof_dump() {
     struct loop_data *prof_loops = desc->_prof_loops_p;
     for (uint32_t i = 0; i < desc->_prof_num_loops; i++) {
       struct loop_data *loop = &prof_loops[i];
-      float pct = (float)profiles.get(loop_idx, loop_idx) / num_sampled;
+      float pct = (float)profile.get(loop_idx, loop_idx) / num_sampled;
       fprintf(flat_out, "%s,%d,%ld,%.4f,%.4f\n", loop->func, loop->header_id,
               loop->runs, 100 * pct, elapsed * pct);
       ++loop_idx;
     }
   }
 
-  for (size_t i = 0; i < _prof_num_loops_tot; i++) {
-    // number of times caller was run
-    float n = profiles.get(i, i);
-    for (size_t j = 0; j < _prof_num_loops_tot; j++) {
-      if (i == j)
-        fprintf(graph_out, "-1");
-      else
-        fprintf(graph_out, "%.4f", profiles.get(i, j) / n * 100);
-
-      if (j != _prof_num_loops_tot - 1)
-        fprintf(graph_out, "\t");
-    }
-    fprintf(graph_out, "\n");
-  }
+  profile.dump(PROF_GRAPH_OUT);
 
   fclose(flat_out);
-  fclose(graph_out);
 }

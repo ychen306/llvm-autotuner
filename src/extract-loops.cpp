@@ -23,6 +23,7 @@
 #include <llvm/Support/ToolOutputFile.h>
 #include <llvm/Support/raw_ostream.h>
 
+#include "LoopCallProfile.h"
 #include <fstream>
 #include <sstream>
 #include <utility>
@@ -51,8 +52,7 @@ struct LoopHeader {
 };
 
 // TODO terminate program gracefully...
-void error(std::string Msg)
-{
+void error(std::string Msg) {
   errs() << "[Error]: " << Msg << '\n';
   std::abort();
 }
@@ -60,14 +60,16 @@ void error(std::string Msg)
 struct LoopHeaderParser : public cl::parser<LoopHeader> {
   LoopHeaderParser(cl::Option &O) : parser(O) {}
 
-  bool parse(cl::Option &O, StringRef ArgName, const std::string &Arg, LoopHeader &LH) {
+  bool parse(cl::Option &O, StringRef ArgName, const std::string &Arg,
+             LoopHeader &LH) {
     size_t sep = Arg.find(',');
 
     // ill-formated string
-    if (sep >= Arg.length() - 1) return true;
+    if (sep >= Arg.length() - 1)
+      return true;
 
     LH.Function = Arg.substr(0, sep);
-    int Id = LH.HeaderId = std::atoi(Arg.substr(sep+1).c_str());
+    int Id = LH.HeaderId = std::atoi(Arg.substr(sep + 1).c_str());
     if (Id <= 0) {
       errs() << "Header id must be a positive integer\n";
       return true;
@@ -77,31 +79,22 @@ struct LoopHeaderParser : public cl::parser<LoopHeader> {
   }
 };
 
-static cl::opt<std::string>
-ExtractedListFile(
-  "e",
-  cl::desc("file where name of extracted functions will be listed"),
-  cl::init("extracted.list"));
+static cl::opt<std::string> ExtractedListFile(
+    "e", cl::desc("file where name of extracted functions will be listed"),
+    cl::init("extracted.list"));
 
 static cl::opt<std::string>
-InputFilename(
-  cl::Positional,
-  cl::desc("<input file>"),
-  cl::Required);
+    InputFilename(cl::Positional, cl::desc("<input file>"), cl::Required);
 
-static cl::opt<std::string>
-OuputPrefix(
-  "p",
-  cl::desc("Specify output prefix"),
-  cl::value_desc("output prefix"),
-  cl::Required);
+static cl::opt<std::string> OuputPrefix("p", cl::desc("Specify output prefix"),
+                                        cl::value_desc("output prefix"),
+                                        cl::Required);
 
 static cl::list<LoopHeader, bool, LoopHeaderParser>
-LoopsToExtract(
-  "l",
-  cl::desc("Specify loop(s) to extract.\nDescribe a loop in this format:\n\"[function],[loop header]\""),
-  cl::OneOrMore, cl::Prefix);
-
+    LoopsToExtract("l",
+                   cl::desc("Specify loop(s) to extract.\nDescribe a loop in "
+                            "this format:\n\"[function],[loop header]\""),
+                   cl::OneOrMore, cl::Prefix);
 
 struct LoopExtractor : public ModulePass {
   static char ID;
@@ -117,14 +110,12 @@ struct LoopExtractor : public ModulePass {
   const char *getPassName() const override { return "LoopExtractor pass"; }
 };
 
-void LoopExtractor::getAnalysisUsage(AnalysisUsage &AU) const
-{
+void LoopExtractor::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<LoopInfoWrapperPass>();
   AU.addRequired<DominatorTreeWrapperPass>();
 }
 
 char LoopExtractor::ID = 42;
-
 
 // define `initializeLoopExtractorPass()`
 INITIALIZE_PASS_BEGIN(LoopExtractor, "", "", true, true)
@@ -132,17 +123,16 @@ INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_END(LoopExtractor, "", "", true, true)
 
-
 static std::vector<GlobalValue *> ExtractedLoops;
 static std::vector<LoopHeader> Headers;
 static std::map<std::string, std::string> Renaming;
 
-// mapping <extracted loop> -> <names of functions that needs to be copied and extracted together with the map>
+// mapping <extracted loop> -> <names of functions that needs to be copied and
+// extracted together with the map>
 static std::map<std::string, std::vector<std::string>> Called;
 
 // read meta data of the call graph node
-std::vector<LoopHeader> readGraphNodeMeta()
-{
+std::vector<LoopHeader> readGraphNodeMeta() {
   std::ifstream Fin("loop-prof.flat.csv");
   std::string Line;
   std::vector<LoopHeader> Nodes;
@@ -161,32 +151,15 @@ std::vector<LoopHeader> readGraphNodeMeta()
   return Nodes;
 }
 
-// build an adjacency matrix for the dynamic call graph
-// NOTE: this doesn't do any error handling
-std::vector<std::vector<float>> loadDynCallGraph(unsigned NumNodes)
-{
-  std::ifstream Fin("loop-prof.graph.csv");
-  std::vector<std::vector<float>> G(NumNodes);
-  std::string NumStr;
-  for (unsigned i = 0; i < NumNodes; i++) {
-    G[i].resize(NumNodes);
-    for (unsigned j = 0; j < NumNodes; j++) {
-      Fin >> NumStr;
-	  G[i][j] = std::stof(NumStr);
-    }
-  }
-  return G;
-}
-
-bool LoopExtractor::runOnModule(Module &M)
-{
+bool LoopExtractor::runOnModule(Module &M) {
   bool Changed = false;
 
   std::vector<LoopHeader> CGNodes = readGraphNodeMeta();
-  std::vector<std::vector<float>> DynCG = loadDynCallGraph(CGNodes.size());
+  LoopCallProfile DynCG;
+  DynCG.load("loop-prof.graph.data");
 
   // mapping function -> ids of basic blocks
-  std::map<std::string, std::set<unsigned> > Loops;
+  std::map<std::string, std::set<unsigned>> Loops;
   for (LoopHeader &LH : LoopsToExtract)
     Loops[LH.Function].insert(LH.HeaderId);
 
@@ -205,34 +178,36 @@ bool LoopExtractor::runOnModule(Module &M)
 
     std::set<unsigned> &Ls = I.second;
 
-    LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*F)
-      .getLoopInfo();
-    DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>(*F)
-      .getDomTree();
+    LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
+    DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>(*F).getDomTree();
 
     unsigned i = 0;
 
     // find basic blocks that are loop headers of loops that the user
     // wants to extract
     for (BasicBlock &BB : *F) {
-      if (Ls.find(++i) == Ls.end()) continue;
+      if (Ls.find(++i) == Ls.end())
+        continue;
 
       Loop *L = LI.getLoopFor(&BB);
       if (!L || L->getParentLoop() || &BB != L->getHeader())
-        error("basic block " + std::to_string(i) + " is not a loop header of top level loop");
+        error("basic block " + std::to_string(i) +
+              " is not a loop header of top level loop");
 
       // "remember" this loop and extract it later
-      ToExtract.emplace_back(std::pair<Loop *, LoopHeader>(L, {F->getName(), i}));
+      ToExtract.emplace_back(
+          std::pair<Loop *, LoopHeader>(L, {F->getName(), i}));
       Changed = true;
     }
 
     // actually extract loops
-    for (auto &Pair: ToExtract) {
+    for (auto &Pair : ToExtract) {
       Loop *L = Pair.first;
       LoopHeader &Header = Pair.second;
       CodeExtractor CE(DT, *L, true);
       Function *Extracted = CE.extractCodeRegion();
-      if (!Extracted) continue;
+      if (!Extracted)
+        continue;
 
       Extracted->setVisibility(GlobalValue::DefaultVisibility);
       Extracted->setLinkage(GlobalValue::ExternalLinkage);
@@ -248,10 +223,13 @@ bool LoopExtractor::runOnModule(Module &M)
       }
       assert(CallerIdx >= 0 && "Extracted loop index not found?");
 
+      unsigned N = DynCG.get(CallerIdx, CallerIdx);
       // find out what functions are called by the loops
-      for (unsigned CalleeIdx=0, E=DynCG.size(); CalleeIdx < E; CalleeIdx++) {
-        if (CalleeIdx == CallerIdx) continue;
-        float TimeSpent = DynCG[CallerIdx][CalleeIdx];
+      for (unsigned CalleeIdx = 0, E = CGNodes.size(); CalleeIdx < E;
+	   CalleeIdx++) {
+        if (CalleeIdx == CallerIdx)
+          continue;
+        float TimeSpent = (float)DynCG.get(CallerIdx, CalleeIdx) / N;
         if (!std::isnan(TimeSpent) && TimeSpent > 0) {
           auto &Node = CGNodes[CalleeIdx];
           if (Node.HeaderId == 0)
@@ -260,25 +238,23 @@ bool LoopExtractor::runOnModule(Module &M)
       }
     }
     ToExtract.resize(0);
-
   }
 
   return Changed;
 }
 
-std::string newFileName()
-{
+std::string newFileName() {
   static int ModuleId = 0;
   return OuputPrefix + "." + std::to_string(ModuleId++) + ".bc";
 }
 
 // return functions called (including those called indirectly) by `Caller`)
-std::vector<GlobalValue *> getCalledFuncs(Module *M, Function *Caller)
-{
+std::vector<GlobalValue *> getCalledFuncs(Module *M, Function *Caller) {
   std::vector<GlobalValue *> Funcs;
   for (auto &CalleeName : Called[Caller->getName()]) {
     auto *F = M->getFunction(CalleeName);
-    if (!F) F = M->getFunction(Renaming[CalleeName]);
+    if (!F)
+      F = M->getFunction(Renaming[CalleeName]);
     assert(F && "Called function not found in new module");
     Funcs.push_back(F);
   }
@@ -291,22 +267,23 @@ struct GraphNodeMeta {
   bool IsFunc; // could be a loop
 };
 
-void externalizeSymbol(GlobalValue &G)
-{
+void externalizeSymbol(GlobalValue &G) {
   char FilePath[PATH_MAX];
   realpath(InputFilename.c_str(), FilePath);
-  if (G.hasHiddenVisibility() || G.hasInternalLinkage() || G.hasPrivateLinkage()) {
-	  auto NewName = std::string("autotuner.internals.")+FilePath+"."+G.getName().str();
-	  Renaming[G.getName().str()] = NewName;
-	  G.setName(NewName);
-	  G.setVisibility(GlobalValue::DefaultVisibility);
-	  G.setLinkage(GlobalValue::ExternalLinkage);
+  if (G.hasHiddenVisibility() || G.hasInternalLinkage() ||
+      G.hasPrivateLinkage()) {
+    auto NewName = std::string("autotuner.internals.") + FilePath + "." +
+                   G.getName().str();
+    Renaming[G.getName().str()] = NewName;
+    G.setName(NewName);
+    G.setVisibility(GlobalValue::DefaultVisibility);
+    G.setLinkage(GlobalValue::ExternalLinkage);
   }
 }
 
-// change internal non-constant globals to external and rename to avoid name-conflict
-void externalize(Module &M)
-{
+// change internal non-constant globals to external and rename to avoid
+// name-conflict
+void externalize(Module &M) {
   for (GlobalVariable &G : M.globals()) {
     externalizeSymbol(G);
   }
@@ -315,8 +292,7 @@ void externalize(Module &M)
   }
 }
 
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
   // Print a stack trace if we signal out.
   sys::PrintStackTraceOnErrorSignal();
   PrettyStackTraceProgram X(argc, argv);
@@ -369,16 +345,15 @@ int main(int argc, char **argv)
     Module *NewModule = CloneModule(CopiedModule);
     std::string ExtractedName = Extracted->getName();
     Function *ExtractedF = NewModule->getFunction(ExtractedName);
-    std::vector<GlobalValue *> ToPreserve=getCalledFuncs(NewModule,ExtractedF);
+    std::vector<GlobalValue *> ToPreserve =
+        getCalledFuncs(NewModule, ExtractedF);
     ToPreserve.push_back(ExtractedF);
 
     std::string BitcodeFName = newFileName();
 
     // report which loop was in which bitcode file
-    ExtractedList << ExtractedName
-      << '\t' << Header.Function
-      << '\t' << Header.HeaderId
-      << '\t' << BitcodeFName << '\n';
+    ExtractedList << ExtractedName << '\t' << Header.Function << '\t'
+                  << Header.HeaderId << '\t' << BitcodeFName << '\n';
 
     tool_output_file ExtractedOut(BitcodeFName, EC, sys::fs::F_None);
     if (EC) {
@@ -396,7 +371,8 @@ int main(int argc, char **argv)
 
     legacy::PassManager PM;
     PM.add(createGVExtractionPass(ToPreserve, false));
-    PM.add(createInternalizePass(std::vector<const char *>{ExtractedName.c_str()}));
+    PM.add(createInternalizePass(
+        std::vector<const char *>{ExtractedName.c_str()}));
     PM.add(createBitcodeWriterPass(ExtractedOut.os(), true));
     PM.run(*NewModule);
 

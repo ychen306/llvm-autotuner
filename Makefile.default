@@ -21,7 +21,7 @@ OBJS = $(BC_OBJS:%=$(OBJ_DIR)/%) $(NATIVE_OBJS:%=$(OBJ_DIR)/%)
 all: build_obj build_exe
 
 # Separate dependences on header files so they are not added to compile cmd
-$(BC_OBJS) $(OBJS): $(SRC_DIR)/common.h
+$(BC_OBJS) $(OBJS): $(SRC_DIR)/common.h $(SRC_DIR)/LoopCallProfile.h
 
 build_exe:
 	mkdir -p $(BIN_DIR) 
