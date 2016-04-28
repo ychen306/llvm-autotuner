@@ -225,8 +225,7 @@ bool LoopExtractor::runOnModule(Module &M) {
 
       unsigned N = DynCG.get(CallerIdx, CallerIdx);
       // find out what functions are called by the loops
-      for (unsigned CalleeIdx = 0, E = CGNodes.size(); CalleeIdx < E;
-	   CalleeIdx++) {
+      for (unsigned CalleeIdx=0, E=CGNodes.size(); CalleeIdx < E; CalleeIdx++) {
         if (CalleeIdx == CallerIdx)
           continue;
         float TimeSpent = (float)DynCG.get(CallerIdx, CalleeIdx) / N;
