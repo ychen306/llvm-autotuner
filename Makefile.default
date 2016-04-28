@@ -10,7 +10,7 @@ BIN_DIR = bin
 OBJ_DIR = obj
 TOOLS = extract-loops instrument-loops instrument-invos create-server autotune
 NATIVE_OBJS = prof.o
-BC_OBJS = prof.bc server.bc invos.bc
+BC_OBJS = prof.bc server.bc invos.bc LoopExtractionPolicy.bc
 
 EXES = $(TOOLS:%=$(BIN_DIR)/%)
 OBJS = $(BC_OBJS:%=$(OBJ_DIR)/%) $(NATIVE_OBJS:%=$(OBJ_DIR)/%)
@@ -20,27 +20,30 @@ OBJS = $(BC_OBJS:%=$(OBJ_DIR)/%) $(NATIVE_OBJS:%=$(OBJ_DIR)/%)
 
 all: build_obj build_exe
 
+# Separate dependences on header files so they are not added to compile cmd
+$(BC_OBJS) $(OBJS): $(SRC_DIR)/common.h
+
 build_exe:
 	mkdir -p $(BIN_DIR) 
 	$(MAKE) $(EXES)
 
 build_obj:
 	mkdir -p $(OBJ_DIR)
-	$(MAKE) $(OBJS)
+	$(MAKE) $(OBJS) $(BC_OBJS)
 
-obj/%.bc: $(SRC_DIR)/%.cpp $(SRC_DIR)/common.h
-	$(CXX) $(CXXFLAGS) -c -emit-llvm $^
+obj/%.bc: $(SRC_DIR)/%.cpp
+	$(CXX) $< $(CXXFLAGS) -c -emit-llvm
 	mv -f $(@F) obj/
 
-obj/%.bc: $(SRC_DIR)/%.c $(SRC_DIR)/common.h
-	$(CC) -O0 -c -emit-llvm $^
+obj/%.bc: $(SRC_DIR)/%.c
+	$(CC) $< -O0 -c -emit-llvm
 	mv -f $(@F) obj/
-
-obj/%.o: $(SRC_DIR)/%.c
-	$(CC) $^ $(CCFLAGS) -c -o $@
 
 obj/%.o: $(SRC_DIR)/%.cpp
-	$(CXX) $^ $(CXXFLAGS) -c -o $@
+	$(CXX) $< $(CXXFLAGS) -c -o $@
+
+obj/%.o: $(SRC_DIR)/%.c
+	$(CC) $< $(CCFLAGS) -c -o $@
 
 bin/%: obj/%.o
 	$(CXX) $^ $(LDFLAGS) -o $@
