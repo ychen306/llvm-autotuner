@@ -12,6 +12,9 @@ x
 *.swp
 *.swo
 
+# emacs backup files
+*~
+
 # Compiled Object files
 *.slo
 *.lo
