@@ -94,14 +94,6 @@ FILE *dumpfile;
 size_t dumpsize;
 size_t num_sampled;
 
-struct fraction {
-  size_t a, b;
-};
-
-static inline float frac2num(struct fraction *frac) {
-  return ((float)frac->a) / frac->b;
-}
-
 // exponential distribution with lambda = 1
 // note that this means the expected value is also one (E[X] = 1/lambda)
 //
