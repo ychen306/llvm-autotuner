@@ -28,6 +28,10 @@ build_obj:
 	mkdir -p $(OBJ_DIR)
 	$(MAKE) $(OBJS)
 
+obj/%.bc: $(SRC_DIR)/%.cpp $(SRC_DIR)/common.h
+	$(CXX) $(CXXFLAGS) -c -emit-llvm $^
+	mv -f $(@F) obj/
+
 obj/%.bc: $(SRC_DIR)/%.c $(SRC_DIR)/common.h
 	$(CC) -O0 -c -emit-llvm $^
 	mv -f $(@F) obj/
