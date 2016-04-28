@@ -1,6 +1,10 @@
 #ifndef _COMMON_H_
 #define _COMMON_H_
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <time.h>
 
 // mach dosen't have `clock_gettime`
@@ -27,5 +31,9 @@ float diff_time(struct timespec *end, struct timespec *begin) {
   return (float)((end->tv_sec - begin->tv_sec) * 1e9 +
                  (end->tv_nsec - begin->tv_nsec));
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
