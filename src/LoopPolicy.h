@@ -10,12 +10,16 @@
 //
 //===----------------------------------------------------------------------===//
 
+#ifndef LOOP_POLICY_H
+#define LOOP_POLICY_H
+
 #include <cstdlib>
 #include <string>
 #include <vector>
 #include <map>
 #include <iostream>
 
+class LoopName;
 class ModulePolicyInfo;
 
 
@@ -50,3 +54,8 @@ extern std::ostream& operator <<(std::ostream&, const LoopPolicy&);
 #if 0
   friend std::istream& operator >>(std::istream&, const LoopPolicy&);
 #endif
+
+
+//===----------------------------------------------------------------------===//
+
+#endif // ifndef LOOP_POLICY_H
