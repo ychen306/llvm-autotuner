@@ -8,16 +8,19 @@ CCFLAGS = $(shell $(CONFIG) --cflags) -O0 -g
 SRC_DIR = src
 BIN_DIR = bin
 OBJ_DIR = obj
-TOOLS = extract-loops instrument-loops instrument-invos create-server autotune
-BC_OBJS = prof.bc server.bc invos.bc LoopExtractionPolicy.bc
+TOOLS = create-policy extract-loops instrument-loops instrument-invos create-server autotune
+LIBS2 := extract
+SRCS = $(wildcard $(SRC_DIR)/*.cpp)
+#BC_OBJS = prof.bc server.bc invos.bc create-policy.bc LoopExtractionPolicy.bc
+BC_OBJS = $(SRCS:$(SRC_DIR)/%.cpp=%.bc)
 
 EXES = $(TOOLS:%=$(BIN_DIR)/%)
 OBJS = $(BC_OBJS:%.bc=$(OBJ_DIR)/%.o)
 
-.PHONY: all clean build_obj build_exe
-.PRECIOUS: %.o %.bc
+.PHONY: all clean build_obj build_libs build_exe
+.PRECIOUS: %.o %.bc %.a
 
-all: build_obj build_exe
+all: build_obj build_libs build_exe
 
 # Separate dependences on header files so they are not added to compile cmd
 HEADERS = $(wildcard SRC_DIR/*.h)
@@ -30,6 +33,10 @@ build_exe:
 build_obj:
 	mkdir -p $(OBJ_DIR)
 	$(MAKE) $(OBJS) $(BC_OBJS)
+
+build_libs:
+	mkdir -p $(OBJ_DIR)
+	$(MAKE) $(LIBS2:%=$(OBJ_DIR)/lib%.a)
 
 obj/%.bc: $(SRC_DIR)/%.cpp
 	$(CXX) $< $(CXXFLAGS) -c -emit-llvm
@@ -45,8 +52,11 @@ obj/%.o: $(SRC_DIR)/%.cpp
 obj/%.o: $(SRC_DIR)/%.c
 	$(CC) $< $(CCFLAGS) -c -o $@
 
-bin/%: obj/%.o
-	$(CXX) $^ $(LDFLAGS) -o $@
+obj/%.a: $(OBJS)
+	 $(AR) rv $@ $^
+
+bin/%: obj/%.o $(LIBS2:%=obj/lib%.a)
+	$(CXX) $< -Lobj -l$(LIBS2) $(LDFLAGS) -o $@
 
 bin/autotune: $(SRC_DIR)/autotune.go
 	go build -o $@ $^
