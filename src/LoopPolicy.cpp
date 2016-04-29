@@ -1,4 +1,4 @@
-//===- llvmtuner/src/LoopExtractionPolicy.cpp: loops to extract -*- C++ -*-===//
+//===- llvmtuner/src/LoopPolicy.cpp: loops to extract -----------*- C++ -*-===//
 //
 // This file is distributed under the University of Illinois Open Source
 // License. See LICENSE.TXT for details.
@@ -23,8 +23,7 @@
 // (b) for each function in the module, which top-level loop in *any* module
 //     needs a copy of that function.
 //
-// See LoopFuncNaming.h for descriptions of qualified-loop-name and 
-// qualified-func-name.
+// See LoopName.h for descriptions of qualified-loop-name, qualified-func-name.
 // 
 //===----------------------------------------------------------------------===//
 
@@ -38,7 +37,7 @@
 #include <vector>
 #include <map>
 
-#include "LoopFuncNaming.h"
+#include "LoopName.h"
 #include "LoopPolicy.h"
 
 //===----------------------------------------------------------------------===//
