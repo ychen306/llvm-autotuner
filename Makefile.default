@@ -9,11 +9,10 @@ SRC_DIR = src
 BIN_DIR = bin
 OBJ_DIR = obj
 TOOLS = extract-loops instrument-loops instrument-invos create-server autotune
-NATIVE_OBJS = prof.o
 BC_OBJS = prof.bc server.bc invos.bc LoopExtractionPolicy.bc
 
 EXES = $(TOOLS:%=$(BIN_DIR)/%)
-OBJS = $(BC_OBJS:%=$(OBJ_DIR)/%) $(NATIVE_OBJS:%=$(OBJ_DIR)/%)
+OBJS = $(BC_OBJS:%.bc=$(OBJ_DIR)/%.o)
 
 .PHONY: all clean build_obj build_exe
 .PRECIOUS: %.o %.bc
@@ -21,7 +20,8 @@ OBJS = $(BC_OBJS:%=$(OBJ_DIR)/%) $(NATIVE_OBJS:%=$(OBJ_DIR)/%)
 all: build_obj build_exe
 
 # Separate dependences on header files so they are not added to compile cmd
-$(BC_OBJS) $(OBJS): $(SRC_DIR)/common.h $(SRC_DIR)/LoopCallProfile.h
+HEADERS = $(wildcard SRC_DIR/*.h)
+$(BC_OBJS) $(OBJS): $(HEADERS)
 
 build_exe:
 	mkdir -p $(BIN_DIR) 
