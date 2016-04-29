@@ -39,8 +39,8 @@
 using namespace llvm;
 
 // because basic blocks can be implicitly labelled,
-// we will reference them (across program executations) by the
-// order of defualt traversal. i.e. the first block encounter
+// we will reference them (across program executions) by the
+// order of default traversal. i.e. the first block encounter
 // in `for (auto &BB : F)` has id 1;
 struct LoopHeader {
   std::string Function;
