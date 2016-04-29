@@ -31,7 +31,6 @@
 #include <string>
 #include <assert.h>
 #include <stdint.h>
-#include <string>
 #include <cstdlib>
 #include <cstdio>
 #include <iostream>
@@ -40,13 +39,22 @@
 #include <map>
 
 #include "LoopFuncNaming.h"
+#include "LoopPolicy.h"
+
+//===----------------------------------------------------------------------===//
+// class ModulePolicyInfo
+//
+// Describes a policy for one module.
+//===----------------------------------------------------------------------===//
 
 class ModulePolicyInfo
 {
+  // Internal state
   const std::string& thisModule;
   std::vector<uint32_t> loopIds;
   std::map<std::string, std::vector<LoopName>* > funcToLoopMap;
   
+  // Retrieving and adding a loop policy for a specified function
   std::vector<LoopName>* getOrInsertLoopsForFunc(const std::string& funcName) {
     std::vector<LoopName>*& vectorEntry = funcToLoopMap[funcName];
     if (vectorEntry == NULL)
@@ -56,7 +64,7 @@ class ModulePolicyInfo
   }
 
 public:
-  // Ctors, dtors and inserting information
+  // Ctors and dtors
   ModulePolicyInfo(const std::string &_module) : thisModule(_module) { }
   ~ModulePolicyInfo() {
     for (auto &mapEntries: funcToLoopMap)
@@ -70,58 +78,15 @@ public:
     vectorEntry->push_back(loopName);
   }
   
-  // Query information.
+  // Query information about the policy
   const std::string &getModule() const			{ return thisModule; }
   const std::vector<uint32_t>& getLoops()  const	{ return loopIds; }
   const std::vector<LoopName>& getLoopsForFunc(const std::string& funcName) {
     return * getOrInsertLoopsForFunc(funcName);
   }
 
-  // Writing out and reading back one policy
+  // Write out and read back one policy
   void print(std::ostream &os) const;
-  friend std::ostream& operator<<(std::ostream&, const ModulePolicyInfo&);
-#if 0
-  friend std::istream& operator>>(std::istream&, ModulePolicyInfo&);
-#endif
-};
-
-class LoopPolicy
-{
-  // Types used within this class
-  typedef std::map<const std::string, ModulePolicyInfo*> PolicyMap;
-  typedef       PolicyMap::iterator       iterator;
-  typedef const PolicyMap::iterator const_iterator;
-  
-  // Internal state
-  PolicyMap modulePolicies;
-
-public:
-  // dtor: release memory for all ModulePoicyInfo objects in the map
-  ~LoopPolicy() {
-    for (auto &MapEntries: modulePolicies)
-      delete MapEntries.second;
-  }
-
-  // Creating and inserting policies
-  ModulePolicyInfo& getOrCreatePolicy(const std::string& moduleName) {
-    ModulePolicyInfo *&policy = modulePolicies[moduleName];
-    if (policy == NULL)
-      policy = new ModulePolicyInfo(moduleName);
-    assert(modulePolicies[moduleName] == policy && "Bad map insertion (2)?");
-    return *policy;
-  }
-
-  // Add a new policy for one loop in one module
-  void addPolicy(const std::string& moduleName,
-		 const std::string& funcName, const LoopName& loopName) {
-    getOrCreatePolicy(moduleName).addLoopForFunc(loopName);
-  }
-
-  // Writing out and reading back the policies
-  friend std::ostream& operator <<(std::ostream&, const LoopPolicy&);
-#if 0
-  friend std::istream& operator >>(std::istream&, const LoopPolicy&);
-#endif
 };
 
 
@@ -135,7 +100,7 @@ void ModulePolicyInfo::print(std::ostream &os) const
   for (auto &id: loopIds)
     os << id;
   os << std::endl;
-
+  
   // Write out the list of qualified-loop-ids for each function, one per line
   for (auto &mapEntries: funcToLoopMap) {
     os << mapEntries.first << ": ";
@@ -161,16 +126,55 @@ std::istream& operator >>(std::istream& is, ModulePolicyInfo& policyInfo)
 }
 #endif
 
-// Write the per-module policy information to an output stream
-std::ostream& operator<<(std::ostream& os, const LoopPolicy& policy)
+
+//===----------------------------------------------------------------------===//
+// class LoopPolicy
+//
+// Describes policies for multiple modules; each one is a ModulePolicyInfo.
+//===----------------------------------------------------------------------===//
+
+// LoopPolicy dtor
+//
+LoopPolicy::~LoopPolicy()
+{
+  for (auto &MapEntries: modulePolicies)
+    delete MapEntries.second;
+}
+
+// Look up the policy for a module.  Insert an empty one if none exists.
+// 
+ModulePolicyInfo& LoopPolicy::getOrCreatePolicy(const std::string& moduleName)
+{
+  ModulePolicyInfo *&policy = modulePolicies[moduleName];
+  if (policy == NULL)
+    policy = new ModulePolicyInfo(moduleName);
+  assert(modulePolicies[moduleName] == policy && "Bad map insertion (2)?");
+  return *policy;
+}
+
+// Add a new policy for one loop in one module
+void LoopPolicy::addPolicy(const std::string& moduleName,
+			   const std::string& funcName,
+			   const LoopName& loopName)
+{
+  getOrCreatePolicy(moduleName).addLoopForFunc(loopName);
+}
+
+void LoopPolicy::print(std::ostream& os) const
 {
   // Write out the map information as a simple serialization,
   // one line per map entry.  Start with number of entries to simplify alloc.
-  os << policy.modulePolicies.size() << "\n";
-  for (auto &mapEntries: policy.modulePolicies) {
+  os << modulePolicies.size() << "\n";
+  for (auto &mapEntries: modulePolicies) {
     os << "Module " << mapEntries.first << ":";
     os << *mapEntries.second << std::endl;
   }
+}
+
+// Write the per-module policy information to an output stream
+std::ostream& operator<<(std::ostream& os, const LoopPolicy& policy)
+{
+  policy.print(os);
   return os;
 }
 
@@ -192,6 +196,10 @@ std::istream& operator >>(std::istream& is, LoopPolicy& policy)
 #endif
 
 
+//===----------------------------------------------------------------------===//
+// Simple test driver.
+// Usage: LoopExtractionPolicy [F1,L1 [, F2,L2, [...]]
+//===----------------------------------------------------------------------===//
 
 int main(int argc, char** argv)
 {
