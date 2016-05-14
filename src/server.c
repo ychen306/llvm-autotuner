@@ -27,6 +27,8 @@
 #define MAXFD 256
 #define MAX_CLIENT
 
+typedef void *(*func_t)(void *);
+
 extern uint32_t _server_invos[];
 extern uint32_t _server_num_invos;
 
@@ -77,7 +79,7 @@ void handle_sigchld(int sig) {
 
 uint32_t _server_spawn_worker(uint32_t (*orig_func)(void *), char *funcname,
                               void *args) {
-  static int invo = 0;
+  static uint32_t invo = 0;
 
   int can_spawn = 0;
   invo++;
@@ -158,7 +160,7 @@ uint32_t _server_spawn_worker(uint32_t (*orig_func)(void *), char *funcname,
           respond(cli_fd, make_error(dlerror()));
         }
 
-        void *(*func)(void *) = dlsym(lib, funcname);
+        func_t func = (func_t)dlsym(lib, funcname);
         if (!func) {
           respond(cli_fd, make_error(dlerror()));
         }
