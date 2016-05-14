@@ -15,16 +15,20 @@
 // "function-name,integer-loop-id"
 // moduleName must be part of the func name (i.e, func must be qualified).
 LoopName::LoopName(const std::string& Arg):
-  resolvedModuleName("")
+  resolvedModuleName(""), loopId(-1)
 {
   size_t sep = Arg.find(',');
   
   // ill-formated string
-  assert(sep < Arg.length() - 1 && "Ill-formatted string initializer");
+  if (sep >= Arg.length() - 1) {
+    std::cerr << "Ill-formatted string initializer";
+    return *this;
+  }
   
   functionName = Arg.substr(0, sep);
   loopId = std::atoi(Arg.substr(sep+1).c_str());
-  assert (loopId > 0 && "Header id must be a positive integer\n");
+  if (loopId > 0)
+    std::cerr << "LoopName: Header id must be a positive integer\n";
 }
 
 LoopName::LoopName(std::string moduleName,

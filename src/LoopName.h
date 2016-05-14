@@ -21,6 +21,13 @@ class LoopName {
   std::istream& operator >>(std::istream& is);
 
 public:
+  LoopName& operator=(const LoopName& loopName) {
+    resolvedModuleName = loopName.resolvedModuleName;
+    functionName = loopName.functionName;
+    loopId = loopName.loopId;
+    return *this;
+  };
+  
   LoopName(std::string moduleName, std::string funcName, unsigned _loopId);
   
   // Construct a LoopName from a formatted string, Arg, with format:
@@ -31,7 +38,7 @@ public:
   // Accessor methods to retrieve components of the name
   const std::string& getModule()   const { return resolvedModuleName; }
   const std::string& getFuncName() const { return functionName; }
-  int                getLoopId()   const { return loopId; }
+  uint32_t           getLoopId()   const { return loopId; }
   std::string        toString()    const;
 };
 
