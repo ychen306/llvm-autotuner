@@ -132,15 +132,18 @@ static void collect_sample_impl(
 
     for (unsigned j = i + 1, e = running_instance.size(); j != e; j++) {
       const auto &colj = running_instance[j];
+      assert(coli.first < colj.first);
+
       if (coli.second < colj.second) {
         // i called j
         profile.get(coli.first, colj.first) += 1;
       } else {
         // j called i
-        profile.get(colj.first, colj.first) += 1;
+        profile.get(colj.first, coli.first) += 1;
       }
     }
   }
+  printf("\n");
 }
 
 // turn [(col1, val1), ...] into [val1, val2, ...]
@@ -265,6 +268,7 @@ void _prof_dump() {
     for (uint32_t i = 0; i < desc->_prof_num_loops; i++) {
       struct loop_data *loop = &prof_loops[i];
       float pct = (float)profile.get(loop_idx, loop_idx) / num_sampled;
+      assert(pct <= 1.0);
       fprintf(flat_out, "%s,%d,%ld,%.4f,%.4f\n", loop->func, loop->header_id,
               loop->runs, 100 * pct, elapsed * pct);
       ++loop_idx;
