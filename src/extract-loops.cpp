@@ -144,7 +144,7 @@ bool LoopExtractor::runOnModule(Module &M) {
   bool Changed = false;
 
   LoopCallProfile DynCG;
-  DynCG.readProfiles("loop-prof.flat.csv", "loop-prof.graph.data");
+  DynCG.readProfiles();
   std::vector<LoopHeader> CGNodes = DynCG.GraphNodeMeta();
 
   // mapping function -> ids of basic blocks

@@ -23,6 +23,9 @@
 
 #include "LoopName.h"
 
+const std::string MetadataFileName = "loop-prof.flat.csv";
+const std::string ProfileFileName  = "loop-prof.graph.data";
+
 //===----------------------------------------------------------------------===//
 // class LoopHeader:
 // because basic blocks can be implicitly labelled,
@@ -91,6 +94,9 @@ class LoopCallProfile {
   };
 
 public:
+  // Get the metadata describing the nodes of the profiled "call graph"
+  std::vector<LoopHeader> GraphNodeMeta() { return CGNodes; }
+  
   // Get the frequency for an edge from node X to node Y
   unsigned& getFreq(unsigned X, unsigned Y) { return M[Edge(X, Y)]; }
   
@@ -123,9 +129,7 @@ public:
   }
 
   // Read metadata and profiles for loops and functions from policy files.
-  void readProfiles(const std::string& MetaFileName,
-		    const std::string& ProfileFileName);
-  std::vector<LoopHeader> GraphNodeMeta() { return CGNodes; }
+  void readProfiles();
 };
 
 void
@@ -161,10 +165,9 @@ LoopCallProfile::readProfileData(const std::string& ProfileFileName)
 }
 
 void
-LoopCallProfile::readProfiles(const std::string& MetaFileName,
-			      const std::string& ProfileFileName)
+LoopCallProfile::readProfiles()
 {
-  readGraphNodeMetaData(MetaFileName);
+  readGraphNodeMetaData(MetadataFileName);
   readProfileData(ProfileFileName);
 }
 
