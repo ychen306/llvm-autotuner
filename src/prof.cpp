@@ -128,7 +128,7 @@ static void collect_sample_impl(
     std::vector<std::pair<unsigned, unsigned>> running_instance) {
   for (unsigned i = 0, e = running_instance.size(); i != e; i++) {
     const auto &coli = running_instance[i];
-    profile.get(coli.first, coli.first) += 1;
+    profile.getFreq(coli.first, coli.first) += 1;
 
     for (unsigned j = i + 1, e = running_instance.size(); j != e; j++) {
       const auto &colj = running_instance[j];
@@ -136,10 +136,10 @@ static void collect_sample_impl(
 
       if (coli.second < colj.second) {
         // i called j
-        profile.get(coli.first, colj.first) += 1;
+        profile.getFreq(coli.first, colj.first) += 1;
       } else {
         // j called i
-        profile.get(colj.first, coli.first) += 1;
+        profile.getFreq(colj.first, coli.first) += 1;
       }
     }
   }
@@ -267,7 +267,7 @@ void _prof_dump() {
     struct loop_data *prof_loops = desc->_prof_loops_p;
     for (uint32_t i = 0; i < desc->_prof_num_loops; i++) {
       struct loop_data *loop = &prof_loops[i];
-      float pct = (float)profile.get(loop_idx, loop_idx) / num_sampled;
+      float pct = (float)profile.getFreq(loop_idx, loop_idx) / num_sampled;
       assert(pct <= 1.0);
       fprintf(flat_out, "%s,%d,%ld,%.4f,%.4f\n", loop->func, loop->header_id,
               loop->runs, 100 * pct, elapsed * pct);

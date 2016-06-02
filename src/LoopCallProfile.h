@@ -1,4 +1,4 @@
-//===- llvmtuner/src/create-policy.cpp: create extraction policy-*- C++ -*-===//
+//===- llvmtuner/src/LoopCallProfile.h: create extraction policy-*- C++ -*-===//
 //
 // This file is distributed under the University of Illinois Open Source
 // License. See LICENSE.TXT for details.
@@ -6,24 +6,25 @@
 //===----------------------------------------------------------------------===//
 //
 // This file provides the following classes:
-// + LoopFuncNumbering: describing a linear numbering of functions and loops
+// + LoopHeader: representing a single loop and its enclosing function
 // + LoopCallProfile: describing a loop->loop and loop->function call profile
 // 
 //===----------------------------------------------------------------------===//
 
-#ifndef _LOOP_CALL_RPFOFILE_H
-#define _LOOP_CALL_RPFOFILE_H
+#ifndef _LOOP_CALL_PROFILE_H
+#define _LOOP_CALL_PROFILE_H
 
 #include <map>
 #include <set>
 #include <fstream>
+#include <climits>
 #include <iostream>	// std::cout
 #include <sstream>	// std::istringstream
 
 #include "LoopName.h"
 
 //===----------------------------------------------------------------------===//
-// class LoopHeader (author: Tom Chen; copied from extract-loops.cpp):
+// class LoopHeader:
 // because basic blocks can be implicitly labelled,
 // we will reference them (across program executions) by the
 // order of default traversal. i.e. the first block encounter
@@ -64,6 +65,10 @@ class LoopCallProfile {
   std::vector<LoopHeader> CGNodes;
   std::map<Edge, unsigned> M;		   // mapping an edge to its frequency
   std::map<unsigned, std::set<unsigned>> nested;	// inner loops & funcs
+
+  // Helper functions to read the two policy files
+  void readGraphNodeMetaData(const std::string& MetaFileName);
+  void readProfileData(const std::string& ProfileFileName);
 
   // helper struct used for serialization
   struct EdgeBuf {
@@ -118,15 +123,13 @@ public:
   }
 
   // Read metadata and profiles for loops and functions from policy files.
-  void readGraphNodeMeta(const std::string& MetaFileName);
-  void readProfileData(const std::string& ProfileFileName);
   void readProfiles(const std::string& MetaFileName,
 		    const std::string& ProfileFileName);
   std::vector<LoopHeader> GraphNodeMeta() { return CGNodes; }
 };
 
 void
-LoopCallProfile::readGraphNodeMeta(const std::string& MetaFileName)
+LoopCallProfile::readGraphNodeMetaData(const std::string& MetaFileName)
 {
   std::ifstream Fin(MetaFileName.c_str());
   std::string Line;
@@ -161,7 +164,7 @@ void
 LoopCallProfile::readProfiles(const std::string& MetaFileName,
 			      const std::string& ProfileFileName)
 {
-  readGraphNodeMeta(MetaFileName);
+  readGraphNodeMetaData(MetaFileName);
   readProfileData(ProfileFileName);
 }
 
