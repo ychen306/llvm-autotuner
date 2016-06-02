@@ -24,6 +24,7 @@
 #include <llvm/Support/raw_ostream.h>
 
 #include "LoopCallProfile.h"
+#include "LoopName.h"
 #include <fstream>
 #include <sstream>
 #include <utility>
@@ -35,21 +36,9 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cmath>
+#include <climits>
 
 using namespace llvm;
-
-// because basic blocks can be implicitly labelled,
-// we will reference them (across program executions) by the
-// order of default traversal. i.e. the first block encounter
-// in `for (auto &BB : F)` has id 1;
-struct LoopHeader {
-  std::string Function;
-  unsigned HeaderId;
-
-  bool operator==(LoopHeader &other) {
-    return Function == other.Function && HeaderId == other.HeaderId;
-  }
-};
 
 // TODO terminate program gracefully...
 void error(std::string Msg) {
@@ -154,9 +143,9 @@ std::vector<LoopHeader> readGraphNodeMeta() {
 bool LoopExtractor::runOnModule(Module &M) {
   bool Changed = false;
 
-  std::vector<LoopHeader> CGNodes = readGraphNodeMeta();
   LoopCallProfile DynCG;
-  DynCG.load("loop-prof.graph.data");
+  DynCG.readProfiles("loop-prof.flat.csv", "loop-prof.graph.data");
+  std::vector<LoopHeader> CGNodes = DynCG.GraphNodeMeta();
 
   // mapping function -> ids of basic blocks
   std::map<std::string, std::set<unsigned>> Loops;
@@ -196,7 +185,7 @@ bool LoopExtractor::runOnModule(Module &M) {
 
       // "remember" this loop and extract it later
       ToExtract.emplace_back(
-          std::pair<Loop *, LoopHeader>(L, {F->getName(), i}));
+        std::pair<Loop *, LoopHeader>(L, LoopHeader(F->getName(), i)));
       Changed = true;
     }
 
@@ -223,12 +212,12 @@ bool LoopExtractor::runOnModule(Module &M) {
       }
       assert(CallerIdx >= 0 && "Extracted loop index not found?");
 
-      unsigned N = DynCG.get(CallerIdx, CallerIdx);
+      unsigned N = DynCG.getFreq(CallerIdx, CallerIdx);
       // find out what functions are called by the loops
       for (unsigned CalleeIdx=0, E=CGNodes.size(); CalleeIdx < E; CalleeIdx++) {
         if (CalleeIdx == CallerIdx)
           continue;
-        float TimeSpent = (float)DynCG.get(CallerIdx, CalleeIdx) / N;
+        float TimeSpent = (float)DynCG.getFreq(CallerIdx, CalleeIdx) / N;
         if (!std::isnan(TimeSpent) && TimeSpent > 0) {
           auto &Node = CGNodes[CalleeIdx];
           if (Node.HeaderId == 0)
