@@ -25,6 +25,8 @@
 
 const std::string MetadataFileName = "loop-prof.flat.csv";
 const std::string ProfileFileName  = "loop-prof.graph.data";
+const std::string ProfileDumpFileName = "loop_prof.out";
+
 
 //===----------------------------------------------------------------------===//
 // class LoopHeader:
