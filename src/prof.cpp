@@ -11,13 +11,10 @@
 #include <sys/mman.h>
 #include <map>
 #include <vector>
+#include <string>
 
 #include "common.h"
 #include "LoopCallProfile.h"
-
-#define PROF_FLAT_OUT "loop-prof.flat.csv"
-#define PROF_GRAPH_OUT "loop-prof.graph.data"
-#define PROF_DUMP "loop_prof.out"
 
 #define END_OF_ROW -1
 
@@ -229,7 +226,7 @@ static void dump_sample(int signo) {
 }
 
 void _prof_init() {
-  dumpfile = fopen(PROF_DUMP, "w+");
+  dumpfile = fopen(ProfileDumpFileName.c_str(), "w+");
 
   srand(time(NULL));
   clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
@@ -258,7 +255,7 @@ void _prof_dump() {
   long long int elapsed =
       (end.tv_sec - begin.tv_sec) * 1e3 + (end.tv_nsec - begin.tv_nsec) / 1e6;
 
-  FILE *flat_out = fopen(PROF_FLAT_OUT, "wb");
+  FILE *flat_out = fopen(MetadataFileName.c_str(), "wb");
 
   fprintf(flat_out, "function,header-id,runs,time(pct),time(ms)\n");
   uint32_t loop_idx = 0;
@@ -275,7 +272,7 @@ void _prof_dump() {
     }
   }
 
-  profile.dump(PROF_GRAPH_OUT);
+  profile.dump(ProfileFileName);
 
   fclose(flat_out);
 }
