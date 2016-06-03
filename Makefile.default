@@ -11,7 +11,7 @@ OBJ_DIR = obj
 TOOLS = create-policy extract-loops instrument-loops instrument-invos create-server autotune
 LIBS2 := extract
 SRCS = $(wildcard $(SRC_DIR)/*.cpp)
-#BC_OBJS = prof.bc server.bc invos.bc create-policy.bc LoopExtractionPolicy.bc
+#BC_OBJS = prof.bc LoopName.bc server.bc invos.bc create-policy.bc LoopExtractionPolicy.bc
 BC_OBJS = $(SRCS:$(SRC_DIR)/%.cpp=%.bc)
 
 EXES = $(TOOLS:%=$(BIN_DIR)/%)
@@ -62,4 +62,4 @@ bin/autotune: $(SRC_DIR)/autotune.go
 	go build -o $@ $^
 
 clean:
-	rm -rf *.o $(EXES) $(OBJS)
+	rm -rf *.o $(EXES) $(OBJS) $(LIBS2:%=$(OBJ_DIR)/lib%.a)
