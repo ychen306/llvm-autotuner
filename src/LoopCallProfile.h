@@ -16,16 +16,15 @@
 
 #include <map>
 #include <set>
-#include <fstream>
-#include <climits>
-#include <iostream>	// std::cout
-#include <sstream>	// std::istringstream
+#include <vector>
+#include <fstream>	// std::ofstream
+#include <climits>	// UINT_MAX
 
 #include "LoopName.h"
 
-const std::string MetadataFileName = "loop-prof.flat.csv";
-const std::string ProfileFileName  = "loop-prof.graph.data";
-const std::string ProfileDumpFileName = "loop_prof.out";
+const char* const MetadataFileName = "loop-prof.flat.csv";
+const char* const ProfileFileName  = "loop-prof.graph.data";
+const char* const ProfileDumpFileName = "loop_prof.out";
 
 
 //===----------------------------------------------------------------------===//
@@ -37,6 +36,7 @@ const std::string ProfileDumpFileName = "loop_prof.out";
 //===----------------------------------------------------------------------===//
 
 struct LoopHeader {
+  std::string ModuleName;
   std::string Function;
   unsigned HeaderId;
 
@@ -66,8 +66,10 @@ class LoopCallProfile {
   // are called directly or indirectly from which (top-level) loops
   typedef std::pair<unsigned, unsigned> Edge;
 
-  // Record the frequency for each edge and called loops/funcs for each loop
+  // Record the loops/funcs called by each loop and frequency for each edge
   std::vector<LoopHeader> CGNodes;
+  std::map<unsigned, LoopName> IdToLoopNameMap;
+  std::map<std::string, unsigned> FuncNameToIdMap;
   std::map<Edge, unsigned> M;		   // mapping an edge to its frequency
   std::map<unsigned, std::set<unsigned>> nested;	// inner loops & funcs
 
@@ -97,7 +99,7 @@ class LoopCallProfile {
 
 public:
   // Get the metadata describing the nodes of the profiled "call graph"
-  std::vector<LoopHeader> GraphNodeMeta() { return CGNodes; }
+  const std::vector<LoopHeader>& GraphNodeMeta() const { return CGNodes; }
   
   // Get the frequency for an edge from node X to node Y
   unsigned& getFreq(unsigned X, unsigned Y) { return M[Edge(X, Y)]; }
@@ -107,6 +109,11 @@ public:
 
   // Does this index represent a function in the nested loop profile?
   bool isFunction(unsigned idx) { return idx == 0; }
+
+  // Access the maps storing id <-> func/loop information
+  const LoopName& getLoopNameForId(unsigned X) { return IdToLoopNameMap[X]; }
+  unsigned getFuncIdForFuncName(const std::string& funcName)
+					{ return FuncNameToIdMap[funcName]; }
 
   // begin(), end() member function used for range-based enumeration
   unsigned begin() { return nested.begin()->first; }
@@ -133,44 +140,5 @@ public:
   // Read metadata and profiles for loops and functions from policy files.
   void readProfiles();
 };
-
-void
-LoopCallProfile::readGraphNodeMetaData(const std::string& MetaFileName)
-{
-  std::ifstream Fin(MetaFileName.c_str());
-  std::string Line;
-  std::vector<LoopHeader>& Nodes = this->CGNodes;
-
-  // skip header
-  std::getline(Fin, Line);
-  while (std::getline(Fin, Line)) {
-    LoopHeader Node;
-    std::istringstream Fields(Line);
-    std::getline(Fields, Node.Function, ',');
-    Fields >> Node.HeaderId;
-
-    Nodes.emplace_back(Node);
-  }
-}
-
-void
-LoopCallProfile::readProfileData(const std::string& ProfileFileName)
-{
-  std::ifstream In;
-  In.open(ProfileFileName, std::ios::binary|std::ios::in);
-  EdgeBuf Buf;
-  while (Buf.readFrom(In)) {
-    getFreq(Buf.From, Buf.To) = Buf.Freq;
-    getNested(Buf.From).insert(Buf.To);
-  }
-  In.close();
-}
-
-void
-LoopCallProfile::readProfiles()
-{
-  readGraphNodeMetaData(MetadataFileName);
-  readProfileData(ProfileFileName);
-}
 
 #endif // ifndef _LOOP_CALL_RPFOFILE_H
