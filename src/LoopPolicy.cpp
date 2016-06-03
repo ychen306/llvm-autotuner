@@ -5,23 +5,30 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file reads in profile information describing the time spent in
-// different top-level loops, the functions called in those loops, and the
-// other loops executed within them, and produces a "policy" file describing
+// class LoopPolicy: A table of ModulePolicyInfo for each LLVM module.
+// class ModulePolicyInfo: A loop extraction policy for one LLVM module.
+// 
+// This file provides classes to describe policies for
 // how to extract subsets of code for optimization.  Each subset contains:
 //	{loop,func1,...,funcN},
 // where loop is a top-level loop described by a "qualified-loop-name" and 
-// and each func is a "qualified-function-name".
+// and each func is a "qualified-func-name".
 // 
 // To support separate extraction from individual (unlinked) LLVM modules,
-// the actual policy file has more information.  The file format is:
-//	list<ModuleName,
-//	     list<local-loop-name>,
-//	     map<func,qualified-loop-name>>
-// For each module "ModuleName", this says:
-// (a) which top-level loops must be extracted into a target file;
-// (b) for each function in the module, which top-level loop in *any* module
-//     needs a copy of that function.
+// these policies are stored external policy files used to communicate between
+// different phases.  The file format is:
+//	list(triple(ModuleName,
+//	            list(top-level-loop-name),
+//	            list(pair(func,
+//                            list(qualified-loop-name)))
+// This says:
+// For each module "ModuleName",
+// (a) a list of top-level loops must be extracted
+// (b) for each function in the module, which top-level loop(s) in *any*
+//     module need a copy of that function.
+// The latter is listed for each function, not each loop, so that each function
+// in the module ModuleName can be extracted to multiple output files in a
+// single pass over the module.
 //
 // See LoopName.h for descriptions of qualified-loop-name, qualified-func-name.
 // 
@@ -36,7 +43,7 @@
 #include <fstream>
 #include <vector>
 #include <map>
-
+#include <set>
 #include "LoopName.h"
 #include "LoopPolicy.h"
 
@@ -48,9 +55,43 @@
 
 class ModulePolicyInfo
 {
+public:
+  // Public types
+  typedef std::set<LoopName, struct LoopNameComp> LoopNameSet;
+
+  // Ctors and dtors
+  ModulePolicyInfo(const std::string &_module) : thisModule(_module) { }
+  ~ModulePolicyInfo() {
+    for (auto &mapEntry: funcToLoopMap)
+      delete mapEntry.second;
+  }
+
+  // Insert one top-level loop
+  void addLoop(const LoopName& loopName) {
+    loops.emplace(loopName);
+  }
+
+  // Insert LoopName for a function in the map
+  void addLoopForFunc(const LoopName& loopName, const std::string& funcName) {
+    std::vector<LoopName>* vectorEntry = getOrInsertLoopsForFunc(funcName);
+    vectorEntry->push_back(loopName);
+  }
+  
+  // Query information about the policy
+  const std::string& getModule() const	{ return thisModule; }
+  const LoopNameSet& getLoops()  const	{ return loops; }
+  const std::vector<LoopName>& getLoopsForFunc(const std::string& funcName) {
+    std::vector<LoopName>* vectorEntry = getOrInsertLoopsForFunc(funcName);
+    return * vectorEntry;
+  }
+
+  // Write out and read back one policy
+  void print(std::ostream& os) const;
+
+private:
   // Internal state
   const std::string& thisModule;
-  std::vector<uint32_t> loopIds;
+  LoopNameSet loops;
   std::map<std::string, std::vector<LoopName>* > funcToLoopMap;
   
   // Retrieving and adding a loop policy for a specified function
@@ -62,30 +103,6 @@ class ModulePolicyInfo
     return vectorEntry;
   }
 
-public:
-  // Ctors and dtors
-  ModulePolicyInfo(const std::string &_module) : thisModule(_module) { }
-  ~ModulePolicyInfo() {
-    for (auto &mapEntries: funcToLoopMap)
-      delete mapEntries.second;
-  }
-
-  // Insert LoopName for a function in the map
-  void addLoopForFunc(const LoopName& loopName) {
-    std::vector<LoopName>* vectorEntry = 
-      getOrInsertLoopsForFunc(loopName.getFuncName());
-    vectorEntry->push_back(loopName);
-  }
-  
-  // Query information about the policy
-  const std::string &getModule() const			{ return thisModule; }
-  const std::vector<uint32_t>& getLoops()  const	{ return loopIds; }
-  const std::vector<LoopName>& getLoopsForFunc(const std::string& funcName) {
-    return * getOrInsertLoopsForFunc(funcName);
-  }
-
-  // Write out and read back one policy
-  void print(std::ostream &os) const;
 };
 
 
@@ -94,16 +111,16 @@ public:
 // Line 2: module-name: func:qualified-loop-id1,...,qualified-loop-idN "\n"
 void ModulePolicyInfo::print(std::ostream &os) const
 {
-  // Write out the loop ids as a simple serialization, in one line.
-  os << "loops: ";
-  for (auto &id: loopIds)
-    os << id;
-  os << std::endl;
+  // Write out the descriptors of top-level loops, one per line.
+  os << "loops: " << std::endl;
+  for (auto &LN: loops)
+    os << LN << std::endl;
   
   // Write out the list of qualified-loop-ids for each function, one per line
-  for (auto &mapEntries: funcToLoopMap) {
-    os << mapEntries.first << ": ";
-    for (auto &loopName: *mapEntries.second)
+  os << "functions: " << std::endl;
+  for (auto &mapEntry: funcToLoopMap) {
+    os << mapEntry.first << ": ";
+    for (auto &loopName: *mapEntry.second)
       os << loopName;
     os << std::endl;
   }
@@ -151,22 +168,34 @@ ModulePolicyInfo& LoopPolicy::getOrCreatePolicy(const std::string& moduleName)
   return *policy;
 }
 
-// Add a new policy for one loop in one module
-void LoopPolicy::addPolicy(const std::string& moduleName,
-			   const std::string& funcName,
-			   const LoopName& loopName)
+// Add a top-level loop
+//
+void LoopPolicy::addLoop(const LoopName& loopName)
 {
-  getOrCreatePolicy(moduleName).addLoopForFunc(loopName);
+  std::string moduleName = loopName.getModule();
+  assert(moduleName.length() > 0 && "Invalid module name: empty string.");
+  if (moduleName.length() > 0)
+    getOrCreatePolicy(moduleName).addLoop(loopName);
+}
+
+// Add a new entry for the policy for one function in one module
+// 
+void LoopPolicy::addLoopForFunc(const std::string& moduleName,
+				const std::string& funcName,
+				const LoopName& loopName)
+{
+  assert(moduleName.length() > 0 && "Invalid module name: empty string.");
+  getOrCreatePolicy(moduleName).addLoopForFunc(loopName, funcName);
 }
 
 void LoopPolicy::print(std::ostream& os) const
 {
   // Write out the map information as a simple serialization,
   // one line per map entry.  Start with number of entries to simplify alloc.
-  os << modulePolicies.size() << "\n";
-  for (auto &mapEntries: modulePolicies) {
-    os << "Module " << mapEntries.first << ":";
-    os << *mapEntries.second << std::endl;
+  os << modulePolicies.size() << " modules for this program.\n";
+  for (auto &mapEntry: modulePolicies) {
+    os << "Module " << mapEntry.first << ":" << std::endl;
+    os << *mapEntry.second << std::endl;
   }
 }
 
@@ -184,9 +213,9 @@ std::istream& operator >>(std::istream& is, LoopPolicy& policy)
   // Read back the map information from a file.
   // 
   os << modulePolicies.size() << "\n";
-  for (auto &mapEntries: modulePolicies) {
-    os << mapEntries.first << ":";
-    for (auto &modulePolicies: mapEntries.second)
+  for (auto &mapEntry: modulePolicies) {
+    os << mapEntry.first << ":";
+    for (auto &modulePolicies: mapEntry.second)
       os << modulePolicies;
     os << "\n";
   }
@@ -215,7 +244,8 @@ int main(int argc, char** argv)
   
   // Insert the specified policies
   for (LoopName& loopName: loopNameVec)
-    policy.addPolicy(loopName.getModule(), loopName.getFuncName(), loopName);
+    policy.addLoopForFunc(loopName.getModule(), loopName.getFuncName(),
+			  loopName);
   
   // Then print them all out as a simple test
   std::cout << policy;
