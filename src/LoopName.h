@@ -10,11 +10,13 @@
 
 #include <string>
 #include <cstdio>
+#include <climits>
 
 class LoopName {
   std::string resolvedModuleName;
   std::string functionName;
   unsigned loopId;
+  friend struct LoopNameComp;
 
   // Writing out and reading back the loop name to a stream
   std::ostream& operator <<(std::ostream& os);
@@ -27,7 +29,9 @@ public:
     loopId = loopName.loopId;
     return *this;
   };
-  
+
+  LoopName(): resolvedModuleName(""), functionName(""), loopId(UINT_MAX) {}
+
   LoopName(std::string moduleName, std::string funcName, unsigned _loopId);
   
   // Construct a LoopName from a formatted string, Arg, with format:
@@ -55,5 +59,16 @@ inline std::istream& operator>>(std::istream& is)
   return is;
 }
 #endif
+
+struct LoopNameComp {
+  bool operator() (const LoopName& lhs, const LoopName& rhs) const {
+    return (lhs.resolvedModuleName < rhs.resolvedModuleName
+	    || (lhs.resolvedModuleName == rhs.resolvedModuleName
+		&& lhs.functionName < rhs.functionName)
+	    || (lhs.resolvedModuleName == rhs.resolvedModuleName
+		&& lhs.functionName == rhs.functionName
+		&& lhs.loopId < rhs.loopId));
+  }
+};
 
 #endif	 //LOOP_FUNC_NAME_H

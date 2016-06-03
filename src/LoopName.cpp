@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cassert>
+#include <iostream>
 #include "LoopName.h"
 
 // Construct a LoopName from a formatted string, Arg, with format:
@@ -22,7 +23,7 @@ LoopName::LoopName(const std::string& Arg):
   // ill-formated string
   if (sep >= Arg.length() - 1) {
     std::cerr << "Ill-formatted string initializer";
-    return *this;
+    return;
   }
   
   functionName = Arg.substr(0, sep);
