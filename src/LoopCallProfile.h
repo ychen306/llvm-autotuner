@@ -68,7 +68,7 @@ class LoopCallProfile {
 
   // Record the loops/funcs called by each loop and frequency for each edge
   std::vector<LoopHeader> CGNodes;
-  std::map<unsigned, LoopName> IdToLoopNameMap;
+  std::map<unsigned, LoopName*> IdToLoopNameMap;
   std::map<std::string, unsigned> FuncNameToIdMap;
   std::map<Edge, unsigned> M;		   // mapping an edge to its frequency
   std::map<unsigned, std::set<unsigned>> nested;	// inner loops & funcs
@@ -111,7 +111,7 @@ public:
   bool isFunction(unsigned idx) { return idx == 0; }
 
   // Access the maps storing id <-> func/loop information
-  const LoopName& getLoopNameForId(unsigned X) { return IdToLoopNameMap[X]; }
+  const LoopName& getLoopNameForId(unsigned X) { return *IdToLoopNameMap[X]; }
   unsigned getFuncIdForFuncName(const std::string& funcName)
 					{ return FuncNameToIdMap[funcName]; }
 

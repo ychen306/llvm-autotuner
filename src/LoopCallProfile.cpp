@@ -16,6 +16,7 @@
 #include <fstream>	// std::ofstream
 #include <iostream>	// std::cout
 #include <sstream>	// std::istringstream
+#include <assert.h>
 
 #include "LoopCallProfile.h"
 #include "LoopName.h"
@@ -41,8 +42,8 @@ LoopCallProfile::readGraphNodeMetaData(const std::string& MetaFileName)
     Nodes.emplace_back(Node);
     
     // Record LoopName info for each entry in the file and map func name to idx
-    IdToLoopNameMap[++nodeNum] = LoopName(Node.ModuleName, 
-					  Node.Function, Node.HeaderId);
+    IdToLoopNameMap.emplace(++nodeNum, 
+	      new LoopName(Node.ModuleName, Node.Function, Node.HeaderId));
     if (isFunction(Node.HeaderId))
       FuncNameToIdMap[Node.Function] = nodeNum;
   }
@@ -73,8 +74,8 @@ LoopCallProfile::readProfileData(const std::string& ProfileFileName)
 
 #undef  DEBUG_PROFILE_DATA
 #ifdef  DEBUG_PROFILE_DATA
-    LoopName& fromLN = IdToLoopNameMap[Buf.From];
-    LoopName& toLN = IdToLoopNameMap[Buf.To];
+    LoopName& fromLN = IdToLoopNameMap.getLoopNameForId(Buf.From);
+    LoopName& toLN = IdToLoopNameMap.getLoopNameForId(Buf.To);
     std::cout << "From("
               << fromLN.getModule() << ", " << fromLN.getFuncName() 
               << " : Loop " << fromLN.getLoopId() << ") " << std::endl 
