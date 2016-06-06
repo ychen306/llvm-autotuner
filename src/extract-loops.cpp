@@ -1,19 +1,16 @@
-#include <llvm/Pass.h>
-#include <llvm/Transforms/IPO.h>
-#include <llvm/IR/LegacyPassManager.h>
-#include <llvm/IRReader/IRReader.h>
-#include <llvm/Support/Debug.h>
-#include <llvm/IR/Module.h>
-#include <llvm/IR/Function.h>
-#include <llvm/IR/BasicBlock.h>
-#include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/Dominators.h>
-#include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/CallGraph.h>
-#include <llvm/Transforms/Utils/CodeExtractor.h>
-#include <llvm/Transforms/Utils/Cloning.h>
+#include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Bitcode/BitcodeWriterPass.h>
+#include <llvm/IR/BasicBlock.h>
+#include <llvm/IR/Dominators.h>
+#include <llvm/IR/Function.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/LegacyPassManager.h>
+#include <llvm/IR/Module.h>
+#include <llvm/IRReader/IRReader.h>
+#include <llvm/Pass.h>
 #include <llvm/Support/CommandLine.h>
+#include <llvm/Support/Debug.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/ManagedStatic.h>
 #include <llvm/Support/PrettyStackTrace.h>
@@ -22,6 +19,10 @@
 #include <llvm/Support/SystemUtils.h>
 #include <llvm/Support/ToolOutputFile.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Transforms/IPO.h>
+#include <llvm/Transforms/Utils/BasicBlockUtils.h>
+#include <llvm/Transforms/Utils/Cloning.h>
+#include <llvm/Transforms/Utils/CodeExtractor.h>
 
 #include "LoopCallProfile.h"
 #include <fstream>
@@ -190,7 +191,8 @@ bool LoopExtractor::runOnModule(Module &M) {
         continue;
 
       Loop *L = LI.getLoopFor(&BB);
-      if (!L || L->getParentLoop() || &BB != L->getHeader())
+      if (!L || L->getParentLoop() || &BB != L->getHeader() ||
+          !L->isLoopSimplifyForm())
         error("basic block " + std::to_string(i) +
               " is not a loop header of top level loop");
 
@@ -199,6 +201,9 @@ bool LoopExtractor::runOnModule(Module &M) {
           std::pair<Loop *, LoopHeader>(L, {F->getName(), i}));
       Changed = true;
     }
+
+    // CodeExtractor doesn't 100% the time with the presence of critical edges
+    SplitAllCriticalEdges(*F, CriticalEdgeSplittingOptions(&DT, &LI));
 
     // actually extract loops
     for (auto &Pair : ToExtract) {
