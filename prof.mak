@@ -8,6 +8,9 @@ endif
 ifndef TARGET
     TARGET=bzip2
 endif
+ifndef CPPFLAGS
+    CPPFLAGS = 
+endif
 ifndef ARGS
     ARGS = $(TARGET).input.program 10
 endif
@@ -22,7 +25,7 @@ OBJ_DIR = $(LEVEL)/obj
 EXE = $(TARGET)
 INSTRUMENTED_MODS = $(MODULES:%.bc=%-prof.bc) 
 OBJ = $(INSTRUMENTED_MODS:%.bc=%.o)
-LIBS += $(OBJ_DIR)/prof.o
+LIBS += $(OBJ_DIR)/prof.o $(OBJ_DIR)/LoopName.o
 
 CC = clang
 CXX = clang++
@@ -37,31 +40,31 @@ ifneq ($(OS),Darwin)
 	LIBS += -lrt
 endif
 
-PROF_OUT = loop-prof.flat.csv loop-prof.graph.csv loop_prof.out
+PROF_OUT = loop-prof.flat.csv loop-prof.graph.data loop_prof.out
 
 .PRECIOUS: %.bc
 
 all: $(EXE)
 	./$(EXE) $(ARGS)
 
-%.bc: $(SRCDIR)/%.c
-	$(CC) -c -emit-llvm $<
+$(SRCDIR)/%.bc: $(SRCDIR)/%.c
+	$(CC) $(CPPFLAGS) -c -emit-llvm $< -o $@
 
-%.bc: %.cpp
-	$(CXX) -c -emit-llvm $<
+$(SRCDIR)/%.bc: $(SRCDIR)/%.cpp
+	$(CXX) $(CPPFLAGS) -c -emit-llvm $< -o $@
 
-%.o: %.bc
+$(SRCDIR)/%.o: $(SRCDIR)/%.bc
 	llc -filetype=obj $< -o $@
 
-%-prof.bc: %.bc
+$(SRCDIR)/%-prof.bc: $(SRCDIR)/%.bc
 	$(BIN_DIR)/instrument-loops $< -o $@
 
-$(TARGET)-prof-bc.o: $(INSTRUMENTED_MODS) $(OBJ_DIR)/prof.bc
+$(SRCDIR)/$(TARGET)-prof-bc.o: $(INSTRUMENTED_MODS) $(OBJ_DIR)/prof.bc
 	$(LINK) $^ -o - | llc -filetype=obj -o $@
 
 $(EXE): $(OBJ)
 	$(CXX) $^ $(LIBS) -o $@
 
 clean:
-	rm -f $(EXE) $(OBJ) $(INSTRUMENTED_MODS) $(PROF_OUT)
+	rm -f $(EXE) $(OBJ) $(MODULES) $(INSTRUMENTED_MODS) $(PROF_OUT)
 

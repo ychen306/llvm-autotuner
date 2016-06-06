@@ -224,6 +224,7 @@ LoopInstrumentation::initGlobals(std::vector<Constant *> &LoopProfiles) {
          "External function `add_module_desc' is in module already?");
   Constant *descFuncDecl = CurModule->getOrInsertFunction(
       extFuncName, Type::getVoidTy(Ctx), /* return type */
+      Type::getInt8PtrTy(Ctx),
       Type::getInt32PtrTy(Ctx), PointerType::get(LoopProfileTy, 0),
       Type::getInt32PtrTy(Ctx), nullptr);
 
@@ -236,6 +237,7 @@ LoopInstrumentation::initGlobals(std::vector<Constant *> &LoopProfiles) {
   IRBuilder<> IRB(entryBlock);
   ArrayRef<Value *> arrayRefList = {
       /* std::initializer_list for ArrayRef */
+      IRB.CreateGlobalStringPtr(CurModule->getName()),
       Prof_Num_Loops_GVar,
       IRB.CreateBitCast(Prof_Loops_GVar, PointerType::get(LoopProfileTy, 0)),
       IRB.CreateBitCast(Prof_Loops_Running_GVar, Type::getInt32PtrTy(Ctx))};

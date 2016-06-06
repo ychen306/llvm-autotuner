@@ -1,17 +1,81 @@
-#ifndef _LOOP_CALL_RPFOFILE_H
-#define _LOOP_CALL_RPFOFILE_H
+//===- llvmtuner/src/LoopCallProfile.h: create extraction policy-*- C++ -*-===//
+//
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file provides the following classes:
+// + LoopHeader: representing a single loop and its enclosing function
+// + LoopCallProfile: describing a loop->loop and loop->function call profile
+// 
+//===----------------------------------------------------------------------===//
+
+#ifndef _LOOP_CALL_PROFILE_H
+#define _LOOP_CALL_PROFILE_H
 
 #include <map>
-#include <fstream>
+#include <set>
+#include <vector>
+#include <fstream>	// std::ofstream
+#include <climits>	// UINT_MAX
+
+#include "LoopName.h"
+
+const char* const MetadataFileName = "loop-prof.flat.csv";
+const char* const ProfileFileName  = "loop-prof.graph.data";
+const char* const ProfileDumpFileName = "loop_prof.out";
+
+
+//===----------------------------------------------------------------------===//
+// class LoopHeader:
+// because basic blocks can be implicitly labelled,
+// we will reference them (across program executions) by the
+// order of default traversal. i.e. the first block encounter
+// in `for (auto &BB : F)` has id 1;
+//===----------------------------------------------------------------------===//
+
+struct LoopHeader {
+  std::string ModuleName;
+  std::string Function;
+  unsigned HeaderId;
+
+  LoopHeader(): Function(""), HeaderId(UINT_MAX) {}
+
+  LoopHeader(const std::string& funcName, unsigned id):
+    Function(funcName), HeaderId(id) {}
+
+  LoopHeader(const LoopName& loopName):
+    Function(loopName.getFuncName()), 
+    HeaderId(loopName.getLoopId()) {}
+
+  bool operator==(LoopHeader &other) const {
+    return Function == other.Function && HeaderId == other.HeaderId;
+  }
+};
+
+
+//===----------------------------------------------------------------------===//
+// class LoopCallProfile: 
+// Describes a loop->loop and loop->function call profile.
+// Uses LoopHeader to "name" loops uniquely within functions.
+//===----------------------------------------------------------------------===//
 
 class LoopCallProfile {
-  // representing an edge in a "call graph", which is not really
-  // a call graph because for every two nodes there can be only
-  // one edge
+  // representing an edge in a "call graph": which shows which functions
+  // are called directly or indirectly from which (top-level) loops
   typedef std::pair<unsigned, unsigned> Edge;
 
-  // mapping an edge to its frequency
-  std::map<Edge, unsigned> M;
+  // Record the loops/funcs called by each loop and frequency for each edge
+  std::vector<LoopHeader> CGNodes;
+  std::map<unsigned, LoopName*> IdToLoopNameMap;
+  std::map<std::string, unsigned> FuncNameToIdMap;
+  std::map<Edge, unsigned> M;		   // mapping an edge to its frequency
+  std::map<unsigned, std::set<unsigned>> nested;	// inner loops & funcs
+
+  // Helper functions to read the two policy files
+  void readGraphNodeMetaData(const std::string& MetaFileName);
+  void readProfileData(const std::string& ProfileFileName);
 
   // helper struct used for serialization
   struct EdgeBuf {
@@ -34,12 +98,31 @@ class LoopCallProfile {
   };
 
 public:
-  unsigned &get(unsigned X, unsigned Y) { return M[Edge(X, Y)]; }
+  // Get the metadata describing the nodes of the profiled "call graph"
+  const std::vector<LoopHeader>& GraphNodeMeta() const { return CGNodes; }
+  
+  // Get the frequency for an edge from node X to node Y
+  unsigned& getFreq(unsigned X, unsigned Y) { return M[Edge(X, Y)]; }
+  
+  // Get the loops and functions called from node X
+  std::set<unsigned>& getNested(unsigned X) { return nested[X]; }
+
+  // Does this index represent a function in the nested loop profile?
+  bool isFunction(unsigned idx) { return idx == 0; }
+
+  // Access the maps storing id <-> func/loop information
+  const LoopName& getLoopNameForId(unsigned X) { return *IdToLoopNameMap[X]; }
+  unsigned getFuncIdForFuncName(const std::string& funcName)
+					{ return FuncNameToIdMap[funcName]; }
+
+  // begin(), end() member function used for range-based enumeration
+  unsigned begin() { return nested.begin()->first; }
+  unsigned end()   { return nested.end()->first; }
 
   // dump this profile to a file
-  void dump(const std::string &OutFilename) { 
+  void dump(const std::string &OutFileName) { 
     std::ofstream Out;
-    Out.open(OutFilename, std::ios::binary|std::ios::out);
+    Out.open(OutFileName, std::ios::binary|std::ios::out);
 
     EdgeBuf Buf;
     for (const auto &Pair : M) {
@@ -54,16 +137,8 @@ public:
     Out.close();
   }
 
-  // load profile from a file
-  void load(const std::string &InFilename) {
-    std::ifstream In;
-    In.open(InFilename, std::ios::binary|std::ios::in);
-    EdgeBuf Buf;
-    while (Buf.readFrom(In)) {
-      get(Buf.From, Buf.To) = Buf.Freq;
-    }
-    In.close();
-  }
+  // Read metadata and profiles for loops and functions from policy files.
+  void readProfiles();
 };
 
-#endif
+#endif // ifndef _LOOP_CALL_RPFOFILE_H

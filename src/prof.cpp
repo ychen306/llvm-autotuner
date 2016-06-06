@@ -11,13 +11,10 @@
 #include <sys/mman.h>
 #include <map>
 #include <vector>
+#include <string>
 
 #include "common.h"
 #include "LoopCallProfile.h"
-
-#define PROF_FLAT_OUT "loop-prof.flat.csv"
-#define PROF_GRAPH_OUT "loop-prof.graph.data"
-#define PROF_DUMP "loop_prof.out"
 
 #define END_OF_ROW -1
 
@@ -41,6 +38,7 @@ static LoopCallProfile profile;
 // Create a linked list of descriptors, one per linked module.
 //
 typedef struct module_desc_t {
+  char *_moduleName;
   uint32_t _prof_num_loops;
   struct loop_data *_prof_loops_p;
   uint32_t *_prof_loops_running_p;
@@ -66,13 +64,15 @@ static module_desc *get_new_desc_list_node() {
   return new_entry;
 }
 
-extern "C" void add_module_desc(int32_t *_numloops, struct loop_data *_p_l,
+extern "C" void add_module_desc(char* moduleName,
+				int32_t *_numloops, struct loop_data *_p_l,
                                 int32_t *_p_l_r) {
   int32_t numloops = *_numloops;
   assert(numloops >= 0 && "Unexpected negative value for _numloops");
   _prof_num_loops_tot += (uint32_t)numloops;
 
   module_desc *new_entry = get_new_desc_list_node();
+  new_entry->_moduleName = strdup(moduleName);
   new_entry->_prof_num_loops = (uint32_t)numloops;
   new_entry->_prof_loops_p = _p_l;
   new_entry->_prof_loops_running_p = (uint32_t *)_p_l_r;
@@ -128,7 +128,7 @@ static void collect_sample_impl(
     std::vector<std::pair<unsigned, unsigned>> running_instance) {
   for (unsigned i = 0, e = running_instance.size(); i != e; i++) {
     const auto &coli = running_instance[i];
-    profile.get(coli.first, coli.first) += 1;
+    profile.getFreq(coli.first, coli.first) += 1;
 
     for (unsigned j = i + 1, e = running_instance.size(); j != e; j++) {
       const auto &colj = running_instance[j];
@@ -136,10 +136,10 @@ static void collect_sample_impl(
 
       if (coli.second < colj.second) {
         // i called j
-        profile.get(coli.first, colj.first) += 1;
+        profile.getFreq(coli.first, colj.first) += 1;
       } else {
         // j called i
-        profile.get(colj.first, coli.first) += 1;
+        profile.getFreq(colj.first, coli.first) += 1;
       }
     }
   }
@@ -229,7 +229,7 @@ static void dump_sample(int signo) {
 }
 
 void _prof_init() {
-  dumpfile = fopen(PROF_DUMP, "w+");
+  dumpfile = fopen(ProfileDumpFileName, "w+");
 
   srand(time(NULL));
   clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
@@ -243,6 +243,12 @@ void _prof_dump() {
   setitimer(SIGPROF, &timerspec, NULL);
   signal(SIGPROF, SIG_IGN);
 
+  // Time the process in ms. For accuracy, do this before postprocessing.
+  struct timespec end;
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
+  long long int elapsed =
+      (end.tv_sec - begin.tv_sec) * 1e3 + (end.tv_nsec - begin.tv_nsec) / 1e6;
+
   // read sample from the dump
   fflush(dumpfile);
   rewind(dumpfile);
@@ -252,30 +258,25 @@ void _prof_dump() {
   fclose(dumpfile);
   collect_samples(dump);
 
-  // time the process in ms
-  struct timespec end;
-  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
-  long long int elapsed =
-      (end.tv_sec - begin.tv_sec) * 1e3 + (end.tv_nsec - begin.tv_nsec) / 1e6;
+  FILE *flat_out = fopen(MetadataFileName, "wb");
 
-  FILE *flat_out = fopen(PROF_FLAT_OUT, "wb");
-
-  fprintf(flat_out, "function,header-id,runs,time(pct),time(ms)\n");
+  fprintf(flat_out, "module,function,header-id,runs,time(pct),time(ms)\n");
   uint32_t loop_idx = 0;
   for (module_desc *desc = module_desc_list_head; desc != NULL;
        desc = desc->next) {
     struct loop_data *prof_loops = desc->_prof_loops_p;
     for (uint32_t i = 0; i < desc->_prof_num_loops; i++) {
       struct loop_data *loop = &prof_loops[i];
-      float pct = (float)profile.get(loop_idx, loop_idx) / num_sampled;
+      float pct = (float)profile.getFreq(loop_idx, loop_idx) / num_sampled;
       assert(pct <= 1.0);
-      fprintf(flat_out, "%s,%d,%ld,%.4f,%.4f\n", loop->func, loop->header_id,
+      fprintf(flat_out, "%s,%s,%d,%ld,%.4f,%.4f\n",
+	      desc->_moduleName, loop->func, loop->header_id,
               loop->runs, 100 * pct, elapsed * pct);
       ++loop_idx;
     }
   }
 
-  profile.dump(PROF_GRAPH_OUT);
+  profile.dump(ProfileFileName);
 
   fclose(flat_out);
 }

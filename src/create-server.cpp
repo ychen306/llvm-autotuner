@@ -114,8 +114,9 @@ void create_server(Module &M) {
       continue;
 
     for (BasicBlock &BB : F) {
-      for (BasicBlock::iterator I = BB.begin(); I != BB.end(); ++I) {
+      for (BasicBlock::iterator I = BB.begin(); I != BB.end(); ) {
         CallInst *Call = dyn_cast<CallInst>(&*I);
+	++I;	// pre-increment to allow Call to be replaced below
         if (Call && Call->getCalledFunction() &&
             Call->getCalledFunction()->getName() == FunctionToRun) {
           Type *RetTy = Call->getFunctionType()->getReturnType();
@@ -124,7 +125,7 @@ void create_server(Module &M) {
               FunctionType::get(RetTy, SpawnFn->getFunctionType()->params(),
                                 false)
                   ->getPointerTo();
-          I = replaceCallWithSpawn(
+          replaceCallWithSpawn(
               Call, new BitCastInst(SpawnFn, SpawnTy, "", Call), GenericFnTy);
           Call->eraseFromParent();
         }

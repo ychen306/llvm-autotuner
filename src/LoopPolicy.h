@@ -10,14 +10,17 @@
 //
 //===----------------------------------------------------------------------===//
 
+#ifndef LOOP_POLICY_H
+#define LOOP_POLICY_H
+
 #include <cstdlib>
 #include <string>
 #include <vector>
 #include <map>
 #include <iostream>
 
+class LoopName;
 class ModulePolicyInfo;
-
 
 //===----------------------------------------------------------------------===//
 
@@ -27,9 +30,6 @@ class LoopPolicy
   typedef std::map<const std::string, ModulePolicyInfo*> PolicyMap;
   typedef       PolicyMap::iterator       iterator;
   typedef const PolicyMap::iterator const_iterator;
-  
-  // Internal state
-  PolicyMap modulePolicies;
 
   // Look up the policy for a module.  Insert an empty one if none exists.
   ModulePolicyInfo& getOrCreatePolicy(const std::string& moduleName);
@@ -38,15 +38,28 @@ public:
   // dtor: release memory for all ModulePoicyInfo objects in the map
   ~LoopPolicy();
 
-  // Add a new policy for one loop in one module
-  void addPolicy(const std::string& moduleName,
-		 const std::string& funcName, const LoopName& loopName);
+  // Add a top-level loop to the policy
+  void addLoop(const LoopName& loopName);
+  
+  // Add one loop for a function
+  void addLoopForFunc(const std::string& moduleName,
+		      const std::string& funcName, const LoopName& loopName);
 
-  // Writing out and reading back the policies
+  // Helper for writing out the policies
   void print(std::ostream &os) const;
+
+private:
+  // Internal state implementing this class
+  PolicyMap modulePolicies;
 };
 
+// Writing out and reading back the policies
 extern std::ostream& operator <<(std::ostream&, const LoopPolicy&);
 #if 0
   friend std::istream& operator >>(std::istream&, const LoopPolicy&);
 #endif
+
+
+//===----------------------------------------------------------------------===//
+
+#endif // ifndef LOOP_POLICY_H
