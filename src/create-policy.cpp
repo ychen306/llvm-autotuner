@@ -33,8 +33,10 @@
 #include <iostream>
 #include <sstream>
 
-const uint32_t TUNING_UPPERBOUND = UINT_MAX;
-const uint32_t TUNING_LOWERBOUND = 0;
+using namespace llvm;
+
+uint32_t TUNING_UPPERBOUND = UINT_MAX;
+uint32_t TUNING_LOWERBOUND = 0;
 
 
 //===----------------------------------------------------------------------===//
@@ -204,7 +206,7 @@ int main(int argc, char** argv)
 
   cl::ParseCommandLineOptions(argc, argv, "top-level loop extractor");
 
-  // Insert one loop name per argument, or "main,1" if no args provided
+  // Insert one loop name per argument, or "main,2" if no args provided
   if (argc <= 1)
     return usage(argc, argv);
 
@@ -291,9 +293,26 @@ LoopPolicy* ExtractThresholdPolicy::computePolicy()
 // Simple driver to test policy extraction using thresholds
 //===----------------------------------------------------------------------===//
 
+static cl::opt<int> pmin("pmin", cl::init(-1), cl::value_desc("min%"),
+			 cl::desc("retain loops with %time >= this value "
+				  "(default min: 0%)"));
+static cl::opt<int> pmax("pmax", cl::init(-1), cl::value_desc("max%"),
+			 cl::desc("retain loops with %time <= this value "
+				  "(default max: 100%)"));
+
 int main(int argc, char** argv)
 {
   ExtractThresholdPolicy thresholdPolicyObj;
+
+  cl::ParseCommandLineOptions(argc, argv, "Create a policy from profiles");
+  if (pmin > 0)
+    TUNING_LOWERBOUND = pmin;
+  if (pmax < 100)
+    TUNING_UPPERBOUND = pmax;
+#ifndef NDEBUG
+  std::cout<< argv[0]<< " pmin="<< pmin<< "% pmax="<< pmax<< "%" << std::endl;
+#endif
+
   LoopPolicy* policy = thresholdPolicyObj.computePolicy();
   if (policy != nullptr) {
     std::cout << *policy;
