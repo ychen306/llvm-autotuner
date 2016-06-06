@@ -34,7 +34,7 @@ LoopName::LoopName(const std::string& Arg):
 
 LoopName::LoopName(std::string moduleName,
 		   std::string funcName, unsigned _loopId) :
-  resolvedModuleName(realpath(moduleName.c_str(), NULL)),
+  resolvedModuleName(moduleName),
   functionName(funcName),
   loopId(_loopId)
 {}
