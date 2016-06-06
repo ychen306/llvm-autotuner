@@ -40,7 +40,7 @@ ifneq ($(OS),Darwin)
 	LIBS += -lrt
 endif
 
-PROF_OUT = loop-prof.flat.csv loop-prof.graph.csv loop_prof.out
+PROF_OUT = loop-prof.flat.csv loop-prof.graph.data loop_prof.out
 
 .PRECIOUS: %.bc
 
