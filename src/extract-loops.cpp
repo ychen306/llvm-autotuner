@@ -23,6 +23,7 @@
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 #include <llvm/Transforms/Utils/CodeExtractor.h>
+#include <llvm/Transforms/Scalar.h>
 
 #include "LoopCallProfile.h"
 #include "LoopName.h"
@@ -311,6 +312,8 @@ int main(int argc, char **argv) {
 
   // extract loops
   Extraction.add(new LoopExtractor());
+  Extraction.add(createJumpThreadingPass());
+  Extraction.add(createCFGSimplificationPass());
   Extraction.run(*M.get());
 
   Module *CopiedModule = CloneModule(M.get());
