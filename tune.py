@@ -11,6 +11,9 @@ import sklearn.cluster
 import numpy as np
 import argparse
 import ctypes
+import reorder
+from util import *
+from config import config
 
 class Edge(ctypes.Structure):
     _fields_ = [('src', ctypes.c_uint),
@@ -36,8 +39,8 @@ class bcolors:
     UNDERLINE = '\033[4m'
 
 # a loop's relative time (%) has to be above this threshold to become a tuning candidate
-TUNING_UPPERBOUND = 80
-TUNING_LOWERBOUND = 10
+TUNING_UPPERBOUND = 100
+TUNING_LOWERBOUND = 20
 
 MAX_INVOS = 10000
 # maximum number of workers spawn to run invocations
@@ -119,7 +122,7 @@ def topological_sort(loops):
         for j in loops[i].nested:
             visit(j)
         sortedloops.append(i)
-    
+
     for i in loops:
         if i not in visited:
             visit(i)
@@ -174,7 +177,7 @@ def tune(bc, makefile, obj_var, using_server=False):
 
 # generate a temporary makefile that extends `orig_makefile` with
 # the ability to compile and link the extracted modules
-# 
+#
 # in the case of tuning using a replay-server,
 # extend the makefile to build a shared library
 #
@@ -207,22 +210,15 @@ def gen_makefile(extracted_modules, orig_makefile):
         print >>makefile, '$(LIB) :', main_lib, deps_without_globals
         print >>makefile, '\tcc -shared -o $(LIB) %s %s' % (main_lib, deps_without_globals)
 
-    return tempfile, vars, main_lib 
+    return tempfile, vars, main_lib
 
 
-# optimize each module with its optimization sequence and link them together
-def link(modules, seqs, out_filename):
-    objs = []
-    for i, m in enumerate(modules):
-        tempfile = get_temp()
-        call('opt {bc} -o - {passes} | llc -filetype=obj -o {obj}'.format(
-            bc=m, passes=seqs[i], obj=tempfile))
-        objs.append(tempfile)
-
-    call('ld -r %s -o %s'% (' '.join(objs), out_filename))
-
-    for m in objs:
-        delete_temp(m)
+# compile each modules SEPARATEly and link them
+def link(modules, out_filename):
+    objs = map(compile_module, modules)
+    call('ld -r {ins} -o {out}'.format(
+        ins=' '.join(objs),
+        out=out_filename))
 
 # given all the extracted modules (with the first one being the "main" module)
 # shared library and the extracted top level loop one wants to tune (a function),
@@ -293,7 +289,7 @@ def find_clusters(elapsed):
     num_invos = len(elapsed)
     # list of invocations
     invos = range(num_invos)
-    
+
     # in case the dataset gets too large for the clustering algorithm,
     # randomly choose a subset of the invocations to cluster
     if num_invos > MAX_INVOS:
@@ -359,39 +355,15 @@ def select_invos(this, modules, func, provided_makefile):
 
     with open('invocations.txt') as prof_out:
         elapsed = map(float, prof_out.read().strip().split())
-    
+
     print 'clustering invocations'
     return find_clusters(elapsed)
 
-default_config = dict(
-    tunerpath='.',
-    flat_profile='loop-prof.flat.csv',
-    graph_profile='loop-prof.graph.data',
-    makefile='provided.mak')
-
-def get_config(): 
-    arg_parser = argparse.ArgumentParser()
-    arg_parser.add_argument("input", help="llvm bitcode file to tune") 
-    arg_parser.add_argument("--tunerpath",
-            default=default_config['tunerpath'],
-            help="path to llvmtuner")
-    arg_parser.add_argument("--graph_profile",
-            default=default_config['graph_profile'],
-            help="path to loop-prof.graph.csv")
-    arg_parser.add_argument("--flat_profile",
-            default=default_config['flat_profile'],
-            help="path to loop-prof.flat.csv")
-    arg_parser.add_argument("--makefile",
-            default=default_config['makefile'],
-            help="path to makefile")
-    return arg_parser.parse_args()
-
 if __name__ == '__main__':
-    config = get_config()
 
     loops, func2loop = get_loops()
     candidates = find_candidate_loops(loops)
-    
+
     # now extract candidate loops
     provided_makefile = config.makefile
     provided_bc = config.input
@@ -400,35 +372,41 @@ if __name__ == '__main__':
     print 'extracted module(s):', ' '.join(extracted_modules[1:])
 
     makefile, vars, main_lib = gen_makefile(extracted_modules, provided_makefile)
-    
+
     # tune loops one at a time
-    seqs = ['-O3']
+    main_module = get_temp()
+    call('opt -O3 {0} -o {1}'.format(extracted_modules[0], main_module))
+    tuned_modules = [main_module]
     for m in extracted_modules[1:]:
         loop = extracted_loops[m]
+        using_server = False
 
-        #invos, weights = select_invos(m, extracted_modules, loop['extracted_func'], provided_makefile)
-        for l in candidates:
-            if l.function == loop['func'] and l.header_id == loop['header_id']:
-                num_invos = l.runs
-                break
-        invos = random.sample(xrange(num_invos), MAX_WORKERS)
+        if using_server:
+            invos, weights = select_invos(m, extracted_modules, loop['extracted_func'], provided_makefile)
+            for l in candidates:
+                if l.function == loop['func'] and l.header_id == loop['header_id']:
+                    num_invos = l.runs
+                    break
+            invos = random.sample(xrange(num_invos), MAX_WORKERS)
+            with open('worker-weight.txt', 'w') as weight_file:
+                for _ in invos:
+                    print >>weight_file, 1
+            print 'creating server to run %s in %s' % (loop['extracted_func'], m)
+            server = create_server(main_lib, extracted_modules, loop['extracted_func'], invos)
 
-        with open('worker-weight.txt', 'w') as weight_file:
-            for _ in invos:
-                print >>weight_file, 1
+            server_path = os.path.abspath(server)
 
-        print 'creating server to run %s in %s' % (loop['extracted_func'], m)
-        server = create_server(main_lib, extracted_modules, loop['extracted_func'], invos)
-    
-        server_path = os.path.abspath(server)
-    
-        print 'spawning workers'
-        call('make -f%s EXE=%s run' % (provided_makefile, server_path))
-    
-        print 'tuning', m
-        seqs.append(tune(m, makefile, obj_var=vars[m], using_server=True))
-    
+            print 'spawning workers'
+            call('make -f%s EXE=%s run' % (provided_makefile, server_path))
+
+        optimized_m = get_temp()
+        call('opt -O3 %s -o %s' % (m, optimized_m))
+
+        tuned_modules.append(reorder.tune(optimized_m, makefile, obj_var=vars[m], using_server=using_server))
+
     optimized = re.sub('\.bc', '.opt.o', provided_bc)
-    link(extracted_modules, seqs, optimized)
+    link(tuned_modules, optimized)
+    for m in tuned_modules:
+        delete_temp(m)
     delete_temp(makefile)
     print 'optimized object file:', optimized
