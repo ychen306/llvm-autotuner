@@ -146,7 +146,7 @@ static void collect_sample_impl(
   printf("\n");
 }
 
-// turn [(col1, val1), ...] into [val1, val2, ...]
+// extract [(col1, val1), (col2, val2), ...] from a buffer like this: `col1|val1|col2|val2|endCol ...`
 // return bytes read from `dump`
 static int uncompress_one_row(std::vector<std::pair<unsigned, unsigned>> &row,
                               int32_t *dump) {
@@ -205,7 +205,7 @@ static void dump_one_sample(module_desc *desc, uint32_t global_idx) {
       continue;
 
     fwriteall(&global_idx, sizeof(uint32_t), dumpfile);
-    fwriteall(desc->_prof_loops_p + i, sizeof(uint32_t), dumpfile);
+    fwriteall(desc->_prof_loops_running_p + i, sizeof(uint32_t), dumpfile);
     dumpsize += sizeof(uint32_t) * 2;
   }
 }
@@ -257,6 +257,10 @@ void _prof_dump() {
   assert(dump && "failed to mmap dumpfile");
   fclose(dumpfile);
   collect_samples(dump);
+  
+#ifndef NDEBUG
+  printf("finished collecting samples\n");
+#endif
 
   FILE *flat_out = fopen(MetadataFileName, "wb");
 
@@ -279,4 +283,8 @@ void _prof_dump() {
   profile.dump(ProfileFileName);
 
   fclose(flat_out);
+
+#ifndef NDEBUG
+  printf("finished dumping profiling output\n");
+#endif
 }
