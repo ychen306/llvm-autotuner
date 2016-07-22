@@ -21,6 +21,20 @@
 #include "LoopCallProfile.h"
 #include "LoopName.h"
 
+//===----------------------------------------------------------------------===//
+// Command line flag to control debugging info for profiles
+//===----------------------------------------------------------------------===//
+
+cl::opt<ProfileDebugOptions>
+ProfileDebugLevel("prof-debug",
+                  cl::desc("Set debugging level for profiling"),
+                  cl::values(
+			     clEnumVal(NoDebug,  "disable debug information"),
+			     clEnumVal(Meta,     "print profile metadata"),
+			     clEnumVal(Pretty,   "pretty-print profile data"),
+			     clEnumValEnd));
+
+//===----------------------------------------------------------------------===//
 
 void
 LoopCallProfile::readGraphNodeMetaData(const std::string& MetaFileName)
@@ -94,5 +108,33 @@ LoopCallProfile::readProfiles()
 {
   readGraphNodeMetaData(MetadataFileName);
   readProfileData(ProfileFileName);
+}
+
+void LoopCallProfile::prettyPrint(std::ostream& os)
+{
+  prettyPrintProfiles(os);
+}
+
+void LoopCallProfile::prettyPrintProfiles(std::ostream& os)
+{
+  os << "----------PROFILES----------" << std::endl << std::endl;
+  for (auto& nestedIter: nested) {
+    std::set<unsigned>& inners = nestedIter.second;
+    unsigned loopId = nestedIter.first;
+    const LoopName& outerLN = getLoopNameForId(loopId);
+    os << (isFunction(outerLN.getLoopId())? "Function " : "Loop ") << outerLN;
+    os << ": SELF = " << getFreq(loopId, loopId) << std::endl;
+
+    unsigned i=1;
+    for (auto& innerId: inners) {
+      const LoopName& innerLN = getLoopNameForId(innerId);
+      //assert(innerLN.getLoopId() == innerId && "What BS is this?!");
+      os << "    [" << i++ << "] "
+	 << (isFunction(innerLN.getLoopId())? "Function " : "Loop ")
+	 << innerLN << ": ADDS " << getFreq(loopId, innerId) << std::endl;
+    }
+
+    os << std::endl;
+  }
 }
 

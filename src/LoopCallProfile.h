@@ -20,12 +20,27 @@
 #include <fstream>	// std::ofstream
 #include <climits>	// UINT_MAX
 
+#include <llvm/Support/CommandLine.h>
+using namespace llvm;
+
 #include "LoopName.h"
+
+//===----------------------------------------------------------------------===//
+// Profile file names.
+// FIXME: Make these configurable.
+//===----------------------------------------------------------------------===//
 
 const char* const MetadataFileName = "loop-prof.flat.csv";
 const char* const ProfileFileName  = "loop-prof.graph.data";
 const char* const ProfileDumpFileName = "loop_prof.out";
 
+//===----------------------------------------------------------------------===//
+// Command line flag to control debugging info for profiles
+//===----------------------------------------------------------------------===//
+
+enum ProfileDebugOptions { NoDebug=0x0, Meta=0x1, Pretty=0x2 };
+
+extern cl::opt<ProfileDebugOptions> ProfileDebugLevel;
 
 //===----------------------------------------------------------------------===//
 // class LoopHeader:
@@ -34,6 +49,9 @@ const char* const ProfileDumpFileName = "loop_prof.out";
 // order of default traversal. i.e. the first block encounter
 // in `for (auto &BB : F)` has id 1;
 //===----------------------------------------------------------------------===//
+
+// Does this index represent a function in the nested loop profile?
+static bool isFunction(unsigned id) { return id == 0; }
 
 struct LoopHeader {
   std::string ModuleName;
@@ -48,6 +66,9 @@ struct LoopHeader {
   LoopHeader(const LoopName& loopName):
     Function(loopName.getFuncName()), 
     HeaderId(loopName.getLoopId()) {}
+
+  // Does this index represent a function in the nested loop profile?
+  bool isFunction() { return ::isFunction(HeaderId); }
 
   bool operator==(LoopHeader &other) const {
     return Function == other.Function && HeaderId == other.HeaderId;
@@ -139,6 +160,10 @@ public:
 
   // Read metadata and profiles for loops and functions from policy files.
   void readProfiles();
+
+  // Formatted printout of metadata and profiles
+  void prettyPrint(std::ostream& os);
+  void prettyPrintProfiles(std::ostream& os);
 };
 
 #endif // ifndef _LOOP_CALL_RPFOFILE_H
