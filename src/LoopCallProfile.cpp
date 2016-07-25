@@ -86,7 +86,6 @@ LoopCallProfile::readProfileData(const std::string& ProfileFileName)
     }
 
     getFreq(Buf.From, Buf.To) = Buf.Freq;
-    std::cout << "!!! " << Buf.From << " is calling " << Buf.To << "\n";
     getNested(Buf.From).emplace(Buf.To);
 
 #undef  DEBUG_PROFILE_DATA
