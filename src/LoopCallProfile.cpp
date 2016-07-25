@@ -56,10 +56,12 @@ LoopCallProfile::readGraphNodeMetaData(const std::string& MetaFileName)
     Nodes.emplace_back(Node);
     
     // Record LoopName info for each entry in the file and map func name to idx
-    IdToLoopNameMap.emplace(++nodeNum, 
+    IdToLoopNameMap.emplace(nodeNum, 
 	      new LoopName(Node.ModuleName, Node.Function, Node.HeaderId));
     if (isFunction(Node.HeaderId))
       FuncNameToIdMap[Node.Function] = nodeNum;
+
+    nodeNum++;
   }
 }
 
@@ -84,6 +86,7 @@ LoopCallProfile::readProfileData(const std::string& ProfileFileName)
     }
 
     getFreq(Buf.From, Buf.To) = Buf.Freq;
+    std::cout << "!!! " << Buf.From << " is calling " << Buf.To << "\n";
     getNested(Buf.From).emplace(Buf.To);
 
 #undef  DEBUG_PROFILE_DATA
