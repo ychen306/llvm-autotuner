@@ -2,20 +2,24 @@ LIBS = support irreader ipo bitwriter bitreader
 CONFIG = llvm-config
 CXX    = clang++
 CC     = clang
+OPT_LEVEL = O3
 LDFLAGS = $(shell $(CONFIG) --ldflags --system-libs --libs $(LIBS) | sed 's/-DNDEBUG//g')
-CXXFLAGS = $(shell $(CONFIG) --cxxflags | sed -e 's/-DNDEBUG//g' -e 's/-O3//g') -O0 -g
-CCFLAGS = $(shell $(CONFIG) --cflags | sed -e 's/-DNDEBUG//g' -e 's/-O3//g') -O0 -g
-SRC_DIR = src
-BIN_DIR = bin
-OBJ_DIR = obj
-TOOLS = create-policy extract-loops instrument-loops instrument-invos create-server autotune reorder-functions
+CXXFLAGS = $(shell $(CONFIG) --cxxflags | sed -e 's/-DNDEBUG//g' -e 's/-O3//g') -$(OPT_LEVEL) -g
+CCFLAGS = $(shell $(CONFIG) --cflags | sed -e 's/-DNDEBUG//g' -e 's/-O3//g') -$(OPT_LEVEL) -g
+SRC_DIR := src
+BIN_DIR := bin
+OBJ_DIR := obj
+TOOLS := create-policy extract-loops instrument-loops instrument-invos create-server reorder-functions
 LIBS2 := extract
-SRCS = $(wildcard $(SRC_DIR)/*.cpp)
-#BC_OBJS = prof.bc LoopName.bc server.bc invos.bc create-policy.bc LoopExtractionPolicy.bc
-BC_OBJS = $(SRCS:$(SRC_DIR)/%.cpp=%.bc)
+SRCS := $(wildcard $(SRC_DIR)/*.cpp)
+TOOL_SRCS := $(TOOLS:%=$(SRC_DIR)/%.cpp)
+LIB_SRCS := $(filter-out $(TOOL_SRCS),$(SRCS))
+BC_OBJS := $(LIB_SRCS:$(SRC_DIR)/%.cpp=%.bc)
 
-EXES = $(TOOLS:%=$(BIN_DIR)/%)
-OBJS = $(BC_OBJS:%.bc=$(OBJ_DIR)/%.o)
+EXES := $(TOOLS:%=$(BIN_DIR)/%)
+# prof.bc is the profiler runtime, don't link it into libextract
+LIB_BCS := $(filter-out prof.bc,$(BC_OBJS))
+OBJS := $(LIB_BCS:%.bc=$(OBJ_DIR)/%.o)
 
 .PHONY: all clean build_obj build_libs build_exe
 .PRECIOUS: %.o %.bc %.a
@@ -36,7 +40,7 @@ build_obj:
 
 build_libs:
 	mkdir -p $(OBJ_DIR)
-	$(MAKE) $(LIBS2:%=$(OBJ_DIR)/lib%.a)
+	$(MAKE) $(LIBS2:%=$(OBJ_DIR)/lib%.a) $(LIBS2:%=$(OBJ_DIR)/lib%.so)
 
 obj/%.bc: $(SRC_DIR)/%.cpp
 	$(CXX) $< $(CXXFLAGS) -c -emit-llvm
@@ -53,13 +57,13 @@ obj/%.o: $(SRC_DIR)/%.c
 	$(CC) $< $(CCFLAGS) -c -o $@
 
 obj/%.a: $(OBJS)
-	 $(AR) rv $@ $^
+	$(AR) rv $@ $^
+
+obj/%.so: $(OBJS)
+	$(CXX) $^ -shared $(shell $(CONFIG) --ldflags) -o $@
 
 bin/%: obj/%.o $(LIBS2:%=obj/lib%.a)
-	$(CXX) $< -Lobj -l$(LIBS2) $(LDFLAGS) -o $@
-
-bin/autotune: $(SRC_DIR)/autotune.go
-	go build -o $@ $^
+	$(CXX) $^ $(LDFLAGS) -o $@
 
 clean:
 	rm -rf *.o $(EXES) $(OBJS) $(LIBS2:%=$(OBJ_DIR)/lib%.a)
